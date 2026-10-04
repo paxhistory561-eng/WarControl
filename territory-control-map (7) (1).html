@@ -1,0 +1,2598 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Карта Контроля Территорий</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+<style>
+body,html{margin:0;padding:0;width:100%;height:100%;overflow:hidden;font-family:system-ui,-apple-system,sans-serif;background:#000}
+#map{width:100%;height:100%;position:absolute;top:0;left:0;touch-action:none}
+.panel{position:absolute;top:8px;right:8px;background:rgba(18,18,18,.92);backdrop-filter:blur(10px);border-radius:6px;z-index:1000;box-shadow:0 3px 10px rgba(0,0,0,.6);width:110px;border:1px solid rgba(255,255,255,.12);overflow:hidden}
+.panel-header{background:rgba(255,255,255,.06);padding:3px 6px;font-size:9px;font-weight:700;color:#fff;display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent}
+.panel-header:active{background:rgba(255,255,255,.2)}
+.panel-body{padding:3px;display:flex;flex-direction:column;gap:2px;max-height:78vh;overflow-y:auto}
+.panel.collapsed .panel-body{display:none}
+.btn{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.14);padding:3px 6px;border-radius:3px;cursor:pointer;font-size:9px;line-height:1.2;text-align:left;min-height:22px;display:flex;align-items:center;user-select:none;-webkit-tap-highlight-color:transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn:active{background:rgba(255,255,255,.28)}
+.btn.active{background:rgba(255,255,255,.35);border-color:#fff;box-shadow:0 0 5px rgba(255,255,255,.35)}
+hr{border:none;border-top:1px solid rgba(255,255,255,.1);margin:1px 0}
+#toast{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(20,20,20,.95);color:#fff;padding:6px 12px;border-radius:6px;font-size:11px;border:1px solid rgba(255,255,255,.2);z-index:2000;opacity:0;pointer-events:none;transition:opacity .3s;max-width:92vw;text-align:center;line-height:1.3}
+#loader{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.85);color:#fff;padding:8px 14px;border-radius:6px;font-size:11px;z-index:2000;display:none;backdrop-filter:blur(5px);border:1px solid rgba(255,255,255,.2)}
+#hint{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.8);color:#fff;padding:5px 11px;border-radius:12px;font-size:10px;pointer-events:none;opacity:0;transition:opacity .3s;z-index:1000;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
+.leaflet-control-attribution{background:rgba(0,0,0,.6)!important;color:#aaa!important;font-size:9px!important}
+.leaflet-control-attribution a{color:#eee!important}
+/* Switcher between OSM and ESRI satellite — minimal, fits existing panel aesthetic */
+.base-layer-switcher{display:flex;gap:2px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:3px;padding:2px}
+.base-layer-btn{flex:1;background:transparent;border:none;color:rgba(255,255,255,.7);font-size:9px;padding:3px 4px;border-radius:2px;cursor:pointer;font-weight:600;line-height:1.1;-webkit-tap-highlight-color:transparent;user-select:none;white-space:nowrap}
+.base-layer-btn:active{background:rgba(255,255,255,.2)}
+.base-layer-btn.active{background:rgba(255,255,255,.35);color:#fff;box-shadow:0 0 4px rgba(255,255,255,.3) inside}
+/* Replay status banner — жёлтое свечение снизу по центру, не блокирует тычков */
+#replay-status{position:absolute;bottom:34px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.95);color:#fff;padding:6px 14px;border-radius:14px;font-size:11px;font-weight:600;z-index:1500;border:1px solid rgba(250,204,21,.6);box-shadow:0 0 18px rgba(250,204,21,.4);backdrop-filter:blur(6px);display:flex;align-items:center;gap:8px;pointer-events:none;max-width:92vw;white-space:nowrap}
+.replay-dot{width:8px;height:8px;border-radius:50%;background:#facc15;animation:replayPulse 1s infinite;flex-shrink:0}
+@keyframes replayPulse{0%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(1.4)}100%{opacity:1;transform:scale(1)}}
+#replay-progress{color:rgba(255,255,255,.6);font-weight:500;font-size:10px}
+.hidden{display:none!important}
+/* === Units === */
+/* Sub-panel для выбора юнита: слева от основной панели, не перекрывает карту */
+#units-panel{position:absolute;top:8px;right:124px;background:rgba(18,18,18,.92);backdrop-filter:blur(10px);border-radius:6px;z-index:1000;box-shadow:0 3px 10px rgba(0,0,0,.6);width:240px;border:1px solid rgba(255,255,255,.12);overflow:hidden;max-height:78vh;display:flex;flex-direction:column}
+.units-body{padding:4px;display:flex;flex-direction:column;gap:3px;overflow-y:auto;flex:1;max-height:70vh}
+.unit-tabs{display:flex;gap:2px;padding:3px 3px 0}
+.unit-tab{flex:1;background:rgba(255,255,255,.06);color:#ddd;border:1px solid rgba(255,255,255,.14);padding:4px 6px;border-radius:3px;cursor:pointer;font-size:10px;font-weight:600;text-align:center;-webkit-tap-highlight-color:transparent;user-select:none}
+.unit-tab:active{background:rgba(255,255,255,.2)}
+.unit-tab.active{background:rgba(255,255,255,.32);color:#fff}
+.unit-tab.ua.active{border-color:#38bdf8;color:#7dd3fc}
+.unit-tab.ru.active{border-color:#f87171;color:#fca5a5}
+.unit-search{width:100%;background:rgba(0,0,0,.4);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:3px;padding:4px 6px;font-size:10px;margin:3px 0;box-sizing:border-box}
+.unit-search::placeholder{color:rgba(255,255,255,.4)}
+.unit-search:focus{outline:none;border-color:rgba(255,255,255,.4)}
+.unit-item{background:rgba(255,255,255,.06);color:#fff;border:1px solid rgba(255,255,255,.12);padding:4px 6px;border-radius:3px;cursor:pointer;font-size:10px;line-height:1.2;display:flex;align-items:center;gap:6px;-webkit-tap-highlight-color:transparent;user-select:none}
+.unit-item:active{background:rgba(255,255,255,.2)}
+.unit-item.active{background:rgba(255,255,255,.32);border-color:#fff;box-shadow:0 0 5px rgba(255,255,255,.3)}
+.unit-item.ua{border-left:3px solid #38bdf8}
+.unit-item.ru{border-left:3px solid #f87171}
+.unit-item .uimg{width:24px;height:24px;object-fit:contain;flex-shrink:0;background:rgba(0,0,0,.3);border-radius:2px}
+.unit-item .usym{width:24px;height:16px;flex-shrink:0;background:rgba(0,0,0,.3);border-radius:2px;display:flex;align-items:center;justify-content:center}
+.unit-item .usym svg{width:100%;height:100%;fill:#fff;stroke:#fff}
+.unit-item .ulab{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Marker на карте: логотип сверху, лейбл снизу */
+.unit-marker{background:rgba(0,0,0,.85);border:1px solid rgba(255,255,255,.3);border-radius:5px;padding:2px;display:flex;flex-direction:column;align-items:center;min-width:38px;max-width:64px;box-shadow:0 2px 6px rgba(0,0,0,.6)}
+.unit-marker.ua{border-color:#38bdf8;box-shadow:0 0 4px rgba(56,189,248,.4),0 2px 6px rgba(0,0,0,.6)}
+.unit-marker.ru{border-color:#f87171;box-shadow:0 0 4px rgba(248,113,113,.4),0 2px 6px rgba(0,0,0,.6)}
+.unit-marker img{width:32px;height:32px;object-fit:contain;border-radius:2px;pointer-events:none}
+.unit-marker .usym{width:32px;height:22px;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.unit-marker .usym svg{width:100%;height:100%;fill:#fff;stroke:#fff}
+.unit-marker .ulab{font-size:9px;color:#fff;font-weight:700;line-height:1.1;padding:0 2px;max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none}
+/* Place-mode toggle button — в под-панели юнитов. Когда active, клик по карте ставит юнит. */
+.btn-place{width:100%;background:rgba(34,197,94,.18);border:1px solid rgba(34,197,94,.5);color:#bbf7d0;padding:5px 6px;border-radius:3px;cursor:pointer;font-size:10px;font-weight:700;margin:3px 0;text-align:center;-webkit-tap-highlight-color:transparent;user-select:none}
+.btn-place:active{background:rgba(34,197,94,.3)}
+.btn-place.active{background:rgba(34,197,94,.5);color:#fff;border-color:#22c55e;box-shadow:0 0 6px rgba(34,197,94,.5)}
+/* Replay speed slider — в основной панели */
+.replay-speed{display:flex;flex-direction:column;gap:2px;margin:3px 0}
+.replay-speed-row{display:flex;justify-content:space-between;align-items:center;font-size:9px;color:#aaa}
+.replay-speed-row .val{color:#fff;font-weight:700}
+.replay-speed input[type=range]{width:100%;height:14px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.1);border-radius:3px;outline:none}
+.replay-speed input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;background:#facc15;border-radius:50%;cursor:pointer;box-shadow:0 0 4px rgba(250,204,21,.5)}
+.replay-speed input[type=range]::-moz-range-thumb{width:12px;height:12px;background:#facc15;border:none;border-radius:50%;cursor:pointer}
+/* Drone marker — силуэт сверху + подпись */
+.drone-marker{background:rgba(0,0,0,.85);border:1px solid rgba(255,255,255,.4);border-radius:50%;padding:2px;display:flex;flex-direction:column;align-items:center;width:36px;height:36px;box-shadow:0 2px 8px rgba(0,0,0,.7)}
+.drone-marker.ua{border-color:#38bdf8;box-shadow:0 0 6px rgba(56,189,248,.5),0 2px 8px rgba(0,0,0,.7)}
+.drone-marker.ru{border-color:#f87171;box-shadow:0 0 6px rgba(248,113,113,.5),0 2px 8px rgba(0,0,0,.7)}
+.drone-marker svg{width:24px;height:24px;fill:#fff;stroke:#fff;flex-shrink:0}
+.drone-marker .ulab{font-size:8px;color:#fff;font-weight:700;line-height:1;padding:0 2px;max-width:48px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none;margin-top:1px}
+/* Strategic target marker — красный кружок-пин с иконкой */
+.target-marker{background:rgba(220,38,38,.9);border:2px solid #fff;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;box-shadow:0 0 8px rgba(220,38,38,.6),0 2px 4px rgba(0,0,0,.5);font-weight:700}
+.target-marker.destroyed{background:rgba(60,60,60,.9);border-color:#888;box-shadow:none;opacity:.6;filter:grayscale(1)}
+/* === БПЛА — отдельное окно (левый верхний угол, оранжевая тема) === */
+/* Чтобы отличить от панели юнитов — другой цвет и положение */
+#drones-panel{position:absolute;top:8px;left:8px;background:rgba(20,12,8,.94);backdrop-filter:blur(10px);border-radius:6px;z-index:1000;box-shadow:0 0 20px rgba(251,146,60,.18),0 3px 10px rgba(0,0,0,.6);width:260px;border:1px solid rgba(251,146,60,.35);overflow:hidden;max-height:78vh;display:flex;flex-direction:column}
+#drones-panel .units-body{padding:4px;display:flex;flex-direction:column;gap:3px;overflow-y:auto;flex:1;max-height:70vh}
+#drones-panel .unit-tabs{display:flex;gap:2px;padding:3px 3px 0}
+#drones-panel .unit-tab{background:rgba(255,255,255,.06);color:#ddd;border:1px solid rgba(255,255,255,.14)}
+#drones-panel .unit-tab.active{background:rgba(251,146,60,.32);color:#fdba74;border-color:#fb923c}
+#drones-panel .unit-tab.ua.active{border-color:#38bdf8;color:#7dd3fc}
+#drones-panel .unit-tab.ru.active{border-color:#f87171;color:#fca5a5}
+#drones-panel .unit-item{background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.18);border-left-width:3px}
+#drones-panel .unit-item.ua{border-left-color:#38bdf8}
+#drones-panel .unit-item.ru{border-left-color:#f87171}
+#drones-panel .unit-item.active{background:rgba(251,146,60,.18);border-color:#fb923c;box-shadow:0 0 6px rgba(251,146,60,.4)}
+#drones-panel .unit-search{background:rgba(0,0,0,.5);border-color:rgba(251,146,60,.25)}
+#drones-panel .drone-marker{background:rgba(20,12,8,.9);border:2px solid #fb923c;box-shadow:0 0 8px rgba(251,146,60,.5),0 2px 8px rgba(0,0,0,.7)}
+#drones-panel .drone-marker.ua{border-color:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.55),0 2px 8px rgba(0,0,0,.7)}
+#drones-panel .drone-marker.ru{border-color:#f87171;box-shadow:0 0 8px rgba(248,113,113,.55),0 2px 8px rgba(0,0,0,.7)}
+.drone-marker{background:rgba(20,12,8,.9);border:2px solid #fb923c;border-radius:50%;padding:2px;display:flex;flex-direction:column;align-items:center;width:36px;height:36px;box-shadow:0 0 8px rgba(251,146,60,.5),0 2px 8px rgba(0,0,0,.7);transition:transform .15s}
+.drone-marker.ua{border-color:#38bdf8;box-shadow:0 0 8px rgba(56,189,248,.55),0 2px 8px rgba(0,0,0,.7)}
+.drone-marker.ru{border-color:#f87171;box-shadow:0 0 8px rgba(248,113,113,.55),0 2px 8px rgba(0,0,0,.7)}
+.drone-marker.selected{animation:dronePulse 0.8s infinite}
+.drone-marker.flying{animation:droneFlying 0.4s infinite}
+@keyframes dronePulse{0%,100%{box-shadow:0 0 8px rgba(251,146,60,.5),0 0 0 0 rgba(251,146,60,.6)}50%{box-shadow:0 0 16px rgba(251,146,60,.8),0 0 0 8px rgba(251,146,60,0)}}
+@keyframes droneFlying{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+/* Mission-mode banner — показывает что дрон выбран и ждёт назначения точки */
+#mission-banner{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(20,12,8,.95);border:1px solid #fb923c;border-radius:14px;padding:6px 14px;color:#fdba74;font-size:11px;font-weight:600;z-index:1500;box-shadow:0 0 16px rgba(251,146,60,.4);display:flex;align-items:center;gap:8px;pointer-events:auto;max-width:92vw}
+#mission-banner button{background:rgba(251,146,60,.2);border:1px solid rgba(251,146,60,.5);color:#fdba74;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:10px;font-weight:700}
+#mission-banner button:hover{background:rgba(251,146,60,.35);color:#fff}
+/* Drone marker — силуэт сверху + подпись. Базовые стили ниже, отдельное окно для БПЛА — оранжевая тема (см. #drones-panel). */
+@media (max-width:640px){.panel{top:6px;right:6px;width:106px}.panel-header{padding:4px 6px;font-size:10px}.btn{min-height:24px;font-size:10px}#toast{top:auto;bottom:66px;font-size:12px}#hint{bottom:12px;font-size:11px;padding:6px 12px}#replay-status{bottom:48px;font-size:12px;padding:8px 16px}#units-panel{top:6px;right:118px;width:200px;max-height:60vh}.units-body{max-height:54vh}#drones-panel{top:6px;left:6px;width:210px;max-height:55vh}#mission-banner{top:auto;bottom:70px;font-size:12px;padding:8px 14px}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="panel" class="panel">
+<div class="panel-header" onclick="togglePanel()"><span>Меню</span><span id="toggle-icon">^</span></div>
+<div class="panel-body">
+<div class="base-layer-switcher" style="margin-bottom:3px">
+<button class="base-layer-btn active" data-period="2026" type="button" onclick="setPeriod('2026')">📅 2026</button>
+<button class="base-layer-btn" data-period="2014" type="button" onclick="setPeriod('2014')">📅 2014</button>
+</div>
+<button id="btn-occupy" class="btn" onclick="setMode('occupy')">Оккупация</button>
+<button id="btn-liberate" class="btn" onclick="setMode('liberate')">Освобождение</button>
+<button id="btn-units" class="btn" onclick="setMode('units')">▶ Юниты</button>
+<button id="btn-drones" class="btn" onclick="setMode('drones')">🛩 БПЛА</button>
+<button id="btn-targets" class="btn" onclick="toggleTargets()">🎯 Цели</button>
+<hr>
+<div class="base-layer-switcher">
+<button class="base-layer-btn active" data-layer="osm" type="button" onclick="setBaseLayer('osm')">🗺 OSM</button>
+<button class="base-layer-btn" data-layer="esri" type="button" onclick="setBaseLayer('esri')">🛰 ESRI</button>
+</div>
+<hr>
+<div class="replay-speed">
+<div class="replay-speed-row"><span>Скорость Replay</span><span class="val" id="replay-speed-val">700 мс</span></div>
+<input type="range" id="replay-speed" min="200" max="2000" step="100" value="700" oninput="updateReplaySpeed(this.value)">
+</div>
+<hr>
+<button class="btn" onclick="fetchRepoData(true)">Импорт из GitHub</button>
+<button class="btn" onclick="popUndo()">Отменить</button>
+<button id="btn-replay" class="btn" onclick="startReplay()">▶ Replay</button>
+</div>
+</div>
+
+<div id="units-panel" class="hidden">
+<div class="unit-tabs">
+<button class="unit-tab ua active" data-side="ua" type="button" onclick="switchUnitSide('ua')">🇺🇦 UA</button>
+<button class="unit-tab ru" data-side="ru" type="button" onclick="switchUnitSide('ru')">🇷🇺 RU</button>
+</div>
+<div class="units-body">
+<button id="btn-place" class="btn-place" type="button" onclick="togglePlaceMode()">⊕ Поставить на карту</button>
+<input type="text" class="unit-search" id="unit-search" placeholder="Поиск юнита…" oninput="renderUnitList()" autocomplete="off">
+<div id="unit-list"></div>
+</div>
+</div>
+
+<div id="drones-panel" class="hidden">
+<div class="unit-tabs">
+<button class="unit-tab ua active" data-side="ua" type="button" onclick="switchDroneSide('ua')">🇺🇦 UA</button>
+<button class="unit-tab ru" data-side="ru" type="button" onclick="switchDroneSide('ru')">🇷🇺 RU</button>
+</div>
+<div class="units-body">
+<button id="btn-place-drone" class="btn-place" type="button" onclick="togglePlaceMode()">⊕ Поставить на карту</button>
+<input type="text" class="unit-search" id="drone-search" placeholder="Поиск БПЛА…" oninput="renderDroneList()" autocomplete="off">
+<div id="drone-list"></div>
+</div>
+</div>
+
+<div id="toast"></div>
+<div id="loader"><span id="loader-text">Загрузка...</span></div>
+<div id="hint">1 палец/ЛКМ — обводка, 2 пальца/ПКМ — двигать</div>
+<div id="replay-status" class="hidden"><span class="replay-dot"></span><span id="replay-text">Replay…</span><span id="replay-progress"></span></div>
+<div id="mission-banner" class="hidden"><span id="mission-text">Дрон выбран — кликни на карту/цель для задания точки полёта</span><button onclick="cancelMission()">✕ Отмена</button></div>
+
+<script>
+window.addEventListener('error', e => {
+    console.error('[global error]', e.error || e.message);
+    try { showToast('Ошибка: ' + (e.message || 'неизвестная'), 4000); } catch(_) {}
+});
+
+// ================= КОНСТАНТЫ =================
+const BUFFER_KM = 1.2;
+// Анимация — чуть быстрее прежней (было 1400)
+const FADE_MS = 1200;
+// Софт-край маски в пикселях (масштабируется от r, с верхним потолком).
+// Гарантирует, что при t=1 край не «щёлкнет» при снятии маски.
+const MASK_SOFT_FRACTION = 0.15; // 15% от радиуса
+const MASK_SOFT_MAX_PX   = 80;   // но не толще 80px
+// Оvershoot радиуса: гарантирует, что при t=1 все точки delta внутри «чёрной» зоны
+const MAXR_OVERSHOOT = 1.20;
+
+const MAX_UNDO = 20;
+
+const SIMPLIFY_DEEPSTATE = 0.0003;
+const SIMPLIFY_LASSO = 0.00005;
+const SIMPLIFY_OPS_INPUT = 0.0002;
+const SIMPLIFY_OPS_RESULT = 0.0002;
+const SIMPLIFY_RENDER = 0.0003;
+const SIMPLIFY_BUFFER_INPUT = 0.0006;
+const MERGE_PAD = 0.0002;
+const RENDER_SIMPLIFY_MIN = 4000;
+
+// ================= REPLAY =================
+// Базовая задержка между кадрами (мс). Может меняться слайдером скорости в
+// панели (replayFrameMs). Меньше = быстрее проигрывание.
+const REPLAY_FRAME_MS_DEFAULT = 700;
+
+// ================= КАРТА =================
+const map = L.map('map', {
+    center: [48.5, 31.0], zoom: 6, minZoom: 5, maxZoom: 18,
+    maxBounds: [[43.0, 20.0], [54.0, 42.0]],
+    attributionControl: true
+});
+
+// Конфиг базовых слоёв. ESRI World_Imagery — спутниковые тайлы,
+// используется в tactical-картах DeepSeek-версии как «2-й вариант карты».
+const TILE_LAYERS = {
+    osm: {
+        url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        options: {
+            attribution: '© OpenStreetMap | DeepStateMap Data',
+            detectRetina: false, keepBuffer: 1, updateWhenIdle: true
+        }
+    },
+    esri: {
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        options: {
+            attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics',
+            detectRetina: false, keepBuffer: 1, updateWhenIdle: true, maxZoom: 19
+        }
+    }
+};
+
+let currentTileLayer = null;
+
+/**
+ * Переключает базовый подклад. Безопасно вызывает removeLayer/addTo/before:
+ *  - previous слой сначала сносится;
+ *  - новый добавляется и уходит в самый низ z-стека (под все overlay-панели);
+ *  - выбор сохраняется в localStorage, восстанавливается при загрузке.
+ */
+function setBaseLayer(key) {
+    if (!TILE_LAYERS[key]) key = 'osm';
+    if (currentTileLayer) {
+        try { map.removeLayer(currentTileLayer); } catch (e) {}
+        currentTileLayer = null;
+    }
+    const def = TILE_LAYERS[key];
+    currentTileLayer = L.tileLayer(def.url, def.options);
+    currentTileLayer.addTo(map);
+    try { currentTileLayer.bringToBack(); } catch (e) {}
+    document.querySelectorAll('.base-layer-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.layer === key);
+    });
+    try { localStorage.setItem('territory-baselayer', key); } catch (e) {}
+}
+
+// Стартовый подклад: сохранённый выбор либо дефолтный OSM.
+(function initBaseLayer() {
+    let saved = 'osm';
+    try { saved = localStorage.getItem('territory-baselayer') || 'osm'; } catch (e) {}
+    setBaseLayer(saved);
+})();
+
+// ================= ПАНЕЛИ =================
+const paneGrey = map.createPane('greyPane');
+paneGrey.style.zIndex = 401;
+paneGrey.style.pointerEvents = 'none';
+
+const paneRedMain = map.createPane('redMain');
+paneRedMain.style.zIndex = 411;
+paneRedMain.style.pointerEvents = 'none';
+
+const paneRedDelta = map.createPane('redDelta');
+paneRedDelta.style.zIndex = 412;
+paneRedDelta.style.pointerEvents = 'none';
+
+const paneLasso = map.createPane('lassoPane');
+paneLasso.style.zIndex = 500;
+paneLasso.style.pointerEvents = 'none';
+
+const lassoPolyline = L.polyline([], {
+    pane: 'lassoPane', color: '#ffffff', weight: 5, opacity: 0.95,
+    lineCap: 'round', lineJoin: 'round', interactive: false
+});
+
+const pointerDot = L.circleMarker([0, 0], {
+    pane: 'lassoPane', radius: 9,
+    color: '#ffffff', fillColor: '#ffffff', fillOpacity: 1, weight: 2, interactive: false
+});
+
+// ================= СТИЛИ =================
+const RED_STYLE = {
+    stroke: true, color: '#7a0f0f', weight: 0.7, opacity: 0.85,
+    fillColor: '#b01e1e', fillOpacity: 0.72, lineJoin: 'round'
+};
+const GREY_STYLE = {
+    stroke: true, color: '#5a5a5a', weight: 1, opacity: 0.7,
+    dashArray: '4, 3', fillColor: '#787878', fillOpacity: 0.45, lineJoin: 'round'
+};
+
+// ================= СЛОИ =================
+const redMainRenderer = L.canvas({ pane: 'redMain' });
+const redDeltaRenderer = L.svg({ pane: 'redDelta' });
+
+const greyLayer = L.geoJSON(null, {
+    pane: 'greyPane', style: () => ({ ...GREY_STYLE }), interactive: false
+}).addTo(map);
+
+const redMainLayer = L.geoJSON(null, {
+    renderer: redMainRenderer, style: () => ({ ...RED_STYLE }), interactive: false
+}).addTo(map);
+
+const redDeltaLayer = L.geoJSON(null, {
+    renderer: redDeltaRenderer, style: () => ({ ...RED_STYLE }), interactive: false
+}).addTo(map);
+
+// ================= СОСТОЯНИЕ =================
+let currentRedZoneFC = turf.featureCollection([]);
+let currentMode = null;
+let isDrawing = false;
+let isRmbPanning = false;
+let lastRmbPos = { x: 0, y: 0 };
+let trackLatLngs = [];
+const undoStack = [];
+let animToken = 0;
+let animBusy = false;
+
+// Replay state. userActionLog — массив снапшотов состояния после КАЖДОГО
+// действия пользователя (init, occupy, liberate, undo). Раньше Replay грузил
+// 310 исторических слепков с DeepState — это был баг: юзер ожидал проигрывание
+// своих действий, а получал дамп с датасета. Теперь трекаем только действия
+// юзера: init (стартовое состояние) + каждый occupy/liberate + каждый undo.
+let userActionLog = [];
+let replayActive = false;
+let replayToken = 0;
+let replaySnapshotBefore = null;
+
+const mapContainer = map.getContainer();
+const loader = document.getElementById('loader');
+const loaderText = document.getElementById('loader-text');
+const hint = document.getElementById('hint');
+const toast = document.getElementById('toast');
+const btnOccupy = document.getElementById('btn-occupy');
+const btnLiberate = document.getElementById('btn-liberate');
+const btnReplay = document.getElementById('btn-replay');
+
+function showToast(text, ms = 2400) {
+    toast.innerText = text;
+    toast.style.opacity = '1';
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => { toast.style.opacity = '0'; }, ms);
+}
+function showLoader(t, show) {
+    if (show) { loaderText.innerText = t; loader.style.display = 'flex'; }
+    else loader.style.display = 'none';
+}
+function togglePanel() {
+    const p = document.getElementById('panel'), i = document.getElementById('toggle-icon');
+    p.classList.toggle('collapsed');
+    i.innerText = p.classList.contains('collapsed') ? 'v' : '^';
+}
+if (window.innerWidth <= 640) {
+    document.getElementById('panel').classList.add('collapsed');
+    document.getElementById('toggle-icon').innerText = 'v';
+}
+
+// ================= ГЕОМЕТРИЧЕСКИЕ УТИЛИТЫ =================
+function isValidRing(r) {
+    if (!Array.isArray(r) || r.length < 4) return false;
+    for (const p of r) {
+        if (!Array.isArray(p) || p.length < 2) return false;
+        if (!isFinite(p[0]) || !isFinite(p[1])) return false;
+    }
+    return true;
+}
+function isValidPolygonFeature(f) {
+    if (!f || !f.geometry) return false;
+    const t = f.geometry.type;
+    if (t === 'Polygon') {
+        const rs = f.geometry.coordinates;
+        return Array.isArray(rs) && rs.length > 0 && rs.every(isValidRing);
+    }
+    if (t === 'MultiPolygon') {
+        const ps = f.geometry.coordinates;
+        return Array.isArray(ps) && ps.length > 0 &&
+            ps.every(rs => Array.isArray(rs) && rs.length > 0 && rs.every(isValidRing));
+    }
+    return false;
+}
+function safeArea(f) { if (!isValidPolygonFeature(f)) return 0; try { return turf.area(f); } catch(e) { return 0; } }
+function canonical(f) {
+    if (!f) return null;
+    try { return turf.rewind(f, { reverse: false, mutate: false }); }
+    catch (e) { return f; }
+}
+function toFC(x) {
+    if (!x) return turf.featureCollection([]);
+    if (x.type === 'FeatureCollection') return x;
+    if (x.type === 'Feature') return turf.featureCollection([x]);
+    if (x.type === 'Polygon' || x.type === 'MultiPolygon') return turf.featureCollection([turf.feature(x)]);
+    return turf.featureCollection([]);
+}
+function fastBbox(feat) {
+    if (!feat || !feat.geometry) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const g = feat.geometry;
+    function walk(coords, depth) {
+        if (depth === 0) {
+            for (let i = 0; i < coords.length; i++) {
+                const p = coords[i];
+                if (p[0] < minX) minX = p[0];
+                if (p[0] > maxX) maxX = p[0];
+                if (p[1] < minY) minY = p[1];
+                if (p[1] > maxY) maxY = p[1];
+            }
+        } else {
+            for (let i = 0; i < coords.length; i++) walk(coords[i], depth - 1);
+        }
+    }
+    try {
+        if (g.type === 'Polygon') walk(g.coordinates, 1);
+        else if (g.type === 'MultiPolygon') walk(g.coordinates, 2);
+        else return null;
+    } catch (e) { return null; }
+    if (!isFinite(minX)) return null;
+    return [minX, minY, maxX, maxY];
+}
+function bboxIntersects(b1, b2) {
+    if (!b1 || !b2) return false;
+    return !(b1[2] < b2[0] || b2[2] < b1[0] || b1[3] < b2[1] || b2[3] < b1[1]);
+}
+function bboxPad(bb, pad) { return [bb[0] - pad, bb[1] - pad, bb[2] + pad, bb[3] + pad]; }
+function getBB(f) {
+    if (!f) return null;
+    if (f.properties && f.properties.__bb) return f.properties.__bb;
+    const bb = fastBbox(f);
+    if (!f.properties) f.properties = {};
+    f.properties.__bb = bb;
+    return bb;
+}
+function invalidateBB(f) {
+    if (f && f.properties) {
+        delete f.properties.__bb;
+        delete f.properties.__simplified;
+    }
+}
+function countPoints(f) {
+    try {
+        let n = 0;
+        const g = f.geometry;
+        if (g.type === 'Polygon') g.coordinates.forEach(r => n += r.length);
+        else if (g.type === 'MultiPolygon') g.coordinates.forEach(ps => ps.forEach(r => n += r.length));
+        return n;
+    } catch (e) { return 0; }
+}
+function simplifyFeature(f, tol) {
+    if (!f || !f.geometry) return f;
+    try {
+        const s = turf.simplify(f, { tolerance: tol, highQuality: false, mutate: false });
+        if (s && s.geometry && isValidPolygonFeature(s)) {
+            if (!s.properties) s.properties = {};
+            delete s.properties.__bb;
+            delete s.properties.__simplified;
+            return s;
+        }
+    } catch (e) {}
+    return f;
+}
+function getSimplified(f, tol) {
+    if (!f) return f;
+    if (f.properties && f.properties.__simplified && f.properties.__simplifiedTol === tol) {
+        return f.properties.__simplified;
+    }
+    const s = simplifyFeature(f, tol);
+    if (!f.properties) f.properties = {};
+    f.properties.__simplified = s;
+    f.properties.__simplifiedTol = tol;
+    return s;
+}
+function prepForOps(f) { return getSimplified(f, SIMPLIFY_OPS_INPUT); }
+function simplifyOpsResult(f) {
+    const s = simplifyFeature(f, SIMPLIFY_OPS_RESULT);
+    invalidateBB(s);
+    return s;
+}
+function simplifyForRender(f) {
+    if (!f) return f;
+    if (countPoints(f) < RENDER_SIMPLIFY_MIN) return f;
+    return simplifyFeature(f, SIMPLIFY_RENDER);
+}
+function simplifyFCForRender(fc) {
+    if (!fc || !fc.features) return fc;
+    if (fc.features.length === 1) {
+        const s = simplifyForRender(fc.features[0]);
+        if (s === fc.features[0]) return fc;
+        return turf.featureCollection([s]);
+    }
+    return turf.featureCollection(fc.features.map(simplifyForRender));
+}
+
+// ================= SEED =================
+function findSeedPoint(anchorFC, deltaFC) {
+    let centroid;
+    try { centroid = turf.centroid(deltaFC).geometry.coordinates; }
+    catch (e) { return null; }
+    if (!centroid || !isFinite(centroid[0]) || !isFinite(centroid[1])) return null;
+
+    if (!anchorFC || !anchorFC.features || !anchorFC.features.length) {
+        return [centroid[0], centroid[1]];
+    }
+
+    let dB = null;
+    for (const f of deltaFC.features) {
+        const b = getBB(f);
+        if (!b) continue;
+        if (!dB) dB = b.slice();
+        else {
+            if (b[0] < dB[0]) dB[0] = b[0];
+            if (b[1] < dB[1]) dB[1] = b[1];
+            if (b[2] > dB[2]) dB[2] = b[2];
+            if (b[3] > dB[3]) dB[3] = b[3];
+        }
+    }
+    const dBpad = dB ? [dB[0] - 0.5, dB[1] - 0.5, dB[2] + 0.5, dB[3] + 0.5] : null;
+
+    let best = [centroid[0], centroid[1]];
+    let bestDist = Infinity;
+    const cX = centroid[0], cY = centroid[1];
+
+    for (const f of anchorFC.features) {
+        if (!f.geometry) continue;
+        if (dBpad) {
+            const bb = getBB(f);
+            if (bb && !bboxIntersects(bb, dBpad)) continue;
+        }
+        try {
+            const g = f.geometry;
+            const rings = g.type === 'Polygon'
+                ? g.coordinates
+                : g.coordinates.flat(1);
+            for (const ring of rings) {
+                if (!Array.isArray(ring) || ring.length < 2) continue;
+                const step = Math.max(1, Math.ceil(ring.length / 400));
+                for (let i = 0; i < ring.length; i += step) {
+                    const p = ring[i];
+                    if (!p || !isFinite(p[0]) || !isFinite(p[1])) continue;
+                    const dx = p[0] - cX, dy = p[1] - cY;
+                    const d = dx * dx + dy * dy;
+                    if (d < bestDist) { bestDist = d; best = [p[0], p[1]]; }
+                }
+            }
+        } catch (e) {}
+    }
+    return best;
+}
+
+// ================= MAX RADIUS =================
+/**
+ * Максимальный радиус «волны» в пикселях.
+ * Возвращает УВЕЛИЧЕННОЕ значение (overshoot), чтобы при t=1 все точки delta
+ * оказались внутри «чёрной» зоны маски — тогда снятие маски не даёт щелчка.
+ */
+function computeMaxRadiusPx(deltaFC, seedLngLat) {
+    const seedPt = map.latLngToContainerPoint([seedLngLat[1], seedLngLat[0]]);
+
+    const pts = [];
+    try {
+        turf.coordEach(deltaFC, (coord) => {
+            if (coord && isFinite(coord[0]) && isFinite(coord[1])) pts.push(coord);
+        });
+    } catch (e) {}
+    if (!pts.length) return 60;
+
+    const step = Math.max(1, Math.ceil(pts.length / 400));
+    let maxR = 0;
+    for (let i = 0; i < pts.length; i += step) {
+        const p = pts[i];
+        const px = map.latLngToContainerPoint([p[1], p[0]]);
+        const d = Math.hypot(px.x - seedPt.x, px.y - seedPt.y);
+        if (d > maxR) maxR = d;
+    }
+    const lp = pts[pts.length - 1];
+    const lpx = map.latLngToContainerPoint([lp[1], lp[0]]);
+    const ld = Math.hypot(lpx.x - seedPt.x, lpx.y - seedPt.y);
+    if (ld > maxR) maxR = ld;
+
+    return Math.max(maxR * MAXR_OVERSHOOT, 60);
+}
+
+// ================= MAP LOCK =================
+function lockMap() {
+    map.dragging.disable();
+    map.touchZoom.disable();
+    map.scrollWheelZoom.disable();
+    map.doubleClickZoom.disable();
+    map.boxZoom.disable();
+    if (map.keyboard) map.keyboard.disable();
+    if (map.tap) { try { map.tap.disable(); } catch(e){} }
+}
+function unlockMap() {
+    if (!currentMode) map.dragging.enable();
+    map.touchZoom.enable();
+    map.scrollWheelZoom.enable();
+    map.doubleClickZoom.enable();
+    map.boxZoom.enable();
+    if (map.keyboard) map.keyboard.enable();
+    if (map.tap) { try { map.tap.enable(); } catch(e){} }
+}
+
+// ================= LASSO CLEANUP =================
+function cleanupLasso() {
+    lassoPolyline.setLatLngs([]);
+    if (map.hasLayer(lassoPolyline)) map.removeLayer(lassoPolyline);
+    hidePointerDot();
+}
+
+// ================= ОТМЕНА АНИМАЦИИ =================
+function cancelAnimation() {
+    animToken++;
+    animBusy = false;
+    const svgEl = paneRedDelta.querySelector('svg');
+    if (svgEl) {
+        svgEl.style.webkitMaskImage = '';
+        svgEl.style.maskImage = '';
+        svgEl.style.willChange = '';
+    }
+    unlockMap();
+}
+
+// ================= MASK-АНИМАЦИЯ =================
+/**
+ * Важно:
+ *  - Серая зона УЖЕ установлена (finalGrey) ДО вызова. Она не меняется ни в
+ *    процессе, ни в финале — только в момент старта операции.
+ *  - Упрощение финального FC уже посчитано заранее (finalSimplified).
+ *  - В кадре — одна строка CSS на mask-image.
+ *  - Софт-край маски задан в ПИКСЕЛЯХ и не «щёлкает» при снятии.
+ */
+function animateMaskReveal(opts) {
+    const { mode, seedLngLat, maxRadiusPx, finalSimplified } = opts;
+    const myToken = ++animToken;
+    animBusy = true;
+    lockMap();
+
+    const svgEl = paneRedDelta.querySelector('svg');
+    if (!svgEl) {
+        // Fallback без SVG — мгновенная замена без анимации
+        animBusy = false;
+        unlockMap();
+        if (mode === 'occupy') {
+            redMainLayer.clearLayers();
+            if (finalSimplified && finalSimplified.features && finalSimplified.features.length) {
+                try { redMainLayer.addData(finalSimplified); } catch(e) {}
+            }
+        }
+        redDeltaSet(null);
+        cleanupLasso();
+        return;
+    }
+
+    // Координаты seed ОДИН РАЗ, в системе координат SVG внутри paneRedDelta
+    const mapRect = mapContainer.getBoundingClientRect();
+    const svgRect = svgEl.getBoundingClientRect();
+    const seedPt = map.latLngToContainerPoint([seedLngLat[1], seedLngLat[0]]);
+    const cx = seedPt.x - (svgRect.left - mapRect.left);
+    const cy = seedPt.y - (svgRect.top - mapRect.top);
+
+    // Софт-край: 15% от радиуса, но не толще 80px.
+    // Работает для любого r — маленькая delta получает тонкий мягкий контур,
+    // большая — широкий.
+    const buildMask = (r) => {
+        const soft = Math.min(r * MASK_SOFT_FRACTION, MASK_SOFT_MAX_PX);
+        const inner = Math.max(0, r - soft);
+        if (mode === 'occupy') {
+            return `radial-gradient(circle ${r}px at ${cx}px ${cy}px, black 0px, black ${inner}px, transparent ${r}px)`;
+        }
+        return `radial-gradient(circle ${r}px at ${cx}px ${cy}px, transparent 0px, transparent ${inner}px, black ${r}px)`;
+    };
+
+    // Стартовая маска — ДО первого rAF. Иначе на первом кадре delta мелькнёт целиком.
+    svgEl.style.willChange = 'mask-image';
+    const initMask = buildMask(1);
+    svgEl.style.webkitMaskImage = initMask;
+    svgEl.style.maskImage = initMask;
+
+    const start = performance.now();
+
+    function frame(now) {
+        if (myToken !== animToken) return;
+
+        const t = Math.min(1, (now - start) / FADE_MS);
+        const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+        const r = Math.max(1, maxRadiusPx * eased);
+
+        svgEl.style.webkitMaskImage = buildMask(r);
+        svgEl.style.maskImage = buildMask(r);
+
+        if (t < 1) {
+            requestAnimationFrame(frame);
+            return;
+        }
+
+        // ===== ФИНАЛЬНЫЙ КАДР =====
+        // Occupy: нужно перекинуть redMain c oldSimplified на finalSimplified.
+        // Делаем это СИНХРОННО + форсируем canvas redraw, чтобы не было
+        // одного кадра, где delta уже очищена, а canvas ещё старый → моргание.
+        if (mode === 'occupy') {
+            redMainLayer.clearLayers();
+            if (finalSimplified && finalSimplified.features && finalSimplified.features.length) {
+                try { redMainLayer.addData(finalSimplified); } catch (e) {}
+            }
+            try {
+                if (redMainRenderer && typeof redMainRenderer._redraw === 'function') {
+                    redMainRenderer._redraw();
+                }
+            } catch (e) {}
+        }
+        // Liberate: redMain уже = finalSimplified с самого начала, менять не нужно.
+
+        // Снимаем маску и убираем delta. Серая — уже установлена, НЕ трогаем.
+        svgEl.style.webkitMaskImage = 'none';
+        svgEl.style.maskImage = 'none';
+        svgEl.style.willChange = '';
+        redDeltaSet(null);
+
+        animBusy = false;
+        unlockMap();
+        cleanupLasso();
+    }
+
+    requestAnimationFrame(frame);
+}
+
+// ================= RED РЕНДЕР =================
+function redMainSet(fc) {
+    redMainLayer.clearLayers();
+    if (fc && fc.features && fc.features.length) {
+        try { redMainLayer.addData(fc); } catch (e) {}
+    }
+}
+function redDeltaSet(fc) {
+    redDeltaLayer.clearLayers();
+    if (fc && fc.features && fc.features.length) {
+        try { redDeltaLayer.addData(fc); } catch (e) {}
+    }
+}
+function redSetInstant(fc) {
+    cancelAnimation();
+    redDeltaSet(null);
+    redMainSet(fc ? simplifyFCForRender(fc) : null);
+}
+
+// ================= GREY =================
+function greySetInstant(zone) {
+    greyLayer.clearLayers();
+    if (zone) {
+        try {
+            const fc = toFC(zone);
+            if (fc.features.length) greyLayer.addData(fc);
+        } catch (e) {}
+    }
+}
+function buildGreyZone(fc) {
+    if (!fc || !fc.features || !fc.features.length) return null;
+    const buffers = [];
+    for (const f of fc.features) {
+        try {
+            const src = simplifyFeature(f, SIMPLIFY_BUFFER_INPUT);
+            const b = turf.buffer(src, BUFFER_KM, { units: 'kilometers' });
+            if (b && b.geometry && isValidPolygonFeature(b)) {
+                const c = canonical(b);
+                invalidateBB(c);
+                buffers.push(c);
+            }
+        } catch (e) {}
+    }
+    if (!buffers.length) return null;
+    if (buffers.length === 1) return buffers[0];
+    let u = buffers[0];
+    for (let i = 1; i < buffers.length; i++) {
+        try {
+            const r = turf.union(prepForOps(u), prepForOps(buffers[i]));
+            if (r && isValidPolygonFeature(r)) u = simplifyOpsResult(canonical(r));
+        } catch (e) {}
+    }
+    return u;
+}
+
+// ================= MERGE =================
+function mergeAllTouching(fc) {
+    if (!fc || !fc.features || fc.features.length < 2) return fc;
+    const features = fc.features;
+    const used = new Array(features.length).fill(false);
+    const out = [];
+    const bboxes = features.map(f => bboxPad(getBB(f), MERGE_PAD));
+    for (let i = 0; i < features.length; i++) {
+        if (used[i]) continue;
+        let cur = features[i]; used[i] = true;
+        let curBB = bboxes[i];
+        let mergedAny = true;
+        while (mergedAny) {
+            mergedAny = false;
+            for (let j = i + 1; j < features.length; j++) {
+                if (used[j]) continue;
+                if (!bboxIntersects(curBB, bboxes[j])) continue;
+                try {
+                    const u = turf.union(prepForOps(cur), prepForOps(features[j]));
+                    if (u && isValidPolygonFeature(u)) {
+                        cur = simplifyOpsResult(canonical(u));
+                        curBB = bboxPad(getBB(cur), MERGE_PAD);
+                        used[j] = true; mergedAny = true;
+                    }
+                } catch (e) {}
+            }
+        }
+        out.push(cur);
+    }
+    return turf.featureCollection(out);
+}
+function fcOccupyFast(fc, L) {
+    const bLpad = bboxPad(getBB(L), MERGE_PAD);
+    const overlaps = []; const rest = [];
+    for (const f of fc.features) {
+        if (bboxIntersects(bboxPad(getBB(f), MERGE_PAD), bLpad)) overlaps.push(f);
+        else rest.push(f);
+    }
+    let delta;
+    if (overlaps.length === 0) { delta = L; }
+    else {
+        let mergedOld = overlaps[0];
+        for (let i = 1; i < overlaps.length; i++) {
+            try {
+                const u = turf.union(prepForOps(mergedOld), prepForOps(overlaps[i]));
+                if (u && isValidPolygonFeature(u)) mergedOld = simplifyOpsResult(canonical(u));
+            } catch (e) {}
+        }
+        try {
+            const d = turf.difference(prepForOps(L), prepForOps(mergedOld));
+            delta = (d && isValidPolygonFeature(d)) ? simplifyOpsResult(canonical(d)) : L;
+        } catch (e) { delta = L; }
+    }
+    return { overlaps, rest, delta };
+}
+function finalizeOccupy(fc, L, overlaps, rest) {
+    if (overlaps.length === 0) return turf.featureCollection([...fc.features, L]);
+    let mergedOverlaps = overlaps[0];
+    for (let i = 1; i < overlaps.length; i++) {
+        try {
+            const u = turf.union(prepForOps(mergedOverlaps), prepForOps(overlaps[i]));
+            if (u && isValidPolygonFeature(u)) mergedOverlaps = simplifyOpsResult(canonical(u));
+        } catch (e) {}
+    }
+    let merged = L;
+    try {
+        const u = turf.union(prepForOps(mergedOverlaps), prepForOps(L));
+        if (u && isValidPolygonFeature(u)) merged = simplifyOpsResult(canonical(u));
+    } catch (e) { merged = L; }
+    return mergeAllTouching(turf.featureCollection([...rest, merged]));
+}
+function fcLiberateFast(fc, L) {
+    const bLpad = bboxPad(getBB(L), MERGE_PAD);
+    const out = []; const removedPieces = [];
+    const Lp = prepForOps(L);
+    for (const f of fc.features) {
+        if (!bboxIntersects(bboxPad(getBB(f), MERGE_PAD), bLpad)) { out.push(f); continue; }
+        let result = null;
+        try { result = turf.difference(prepForOps(f), Lp); }
+        catch (e) { out.push(f); continue; }
+        if (result && isValidPolygonFeature(result)) {
+            const cleaned = simplifyOpsResult(canonical(result));
+            out.push(cleaned);
+            try {
+                const rem = turf.difference(prepForOps(f), prepForOps(cleaned));
+                if (rem && isValidPolygonFeature(rem)) removedPieces.push(simplifyOpsResult(canonical(rem)));
+            } catch (e) {}
+        } else { removedPieces.push(f); }
+    }
+    let delta = null;
+    if (removedPieces.length === 1) delta = removedPieces[0];
+    else if (removedPieces.length > 1) {
+        let u = removedPieces[0];
+        for (let i = 1; i < removedPieces.length; i++) {
+            try {
+                const r = turf.union(prepForOps(u), prepForOps(removedPieces[i]));
+                if (r && isValidPolygonFeature(r)) u = simplifyOpsResult(canonical(r));
+            } catch (e) {}
+        }
+        delta = u;
+    }
+    return { fastFC: turf.featureCollection(out), delta };
+}
+
+// ================= СОХРАНЕНИЕ =================
+function saveState() {
+    saveStateToStorage();
+    // Логируем действие для будущего Replay. currentMode в этот момент
+    // ещё 'occupy' или 'liberate' (сбрасывается только при след. клике).
+    pushUserAction(currentMode || 'edit');
+}
+
+/**
+ * Сохраняет состояние в localStorage БЕЗ логирования в userActionLog.
+ * Используется в applyPeriodData — там лог уже был сброшен и в него
+ * добавлен 'init' pushUserAction, дополнительный 'edit' не нужен (было бы
+ * два подряд идущих снапшота с одинаковым состоянием → рваный Replay).
+ */
+function saveStateToStorage() {
+    try {
+        const clean = {
+            type: 'FeatureCollection',
+            features: currentRedZoneFC.features.map(f => ({
+                type: 'Feature', properties: {}, geometry: f.geometry
+            }))
+        };
+        if (currentRedZoneFC.features.length) localStorage.setItem('deepstate-map-save', JSON.stringify(clean));
+        else localStorage.removeItem('deepstate-map-save');
+    } catch (e) {}
+}
+
+/**
+ * Пушит снапшот текущего состояния в userActionLog для будущего Replay.
+ * trim до 50 последних — чтобы лог не разрастался бесконечно.
+ */
+function pushUserAction(action) {
+    try {
+        const clean = {
+            type: 'FeatureCollection',
+            features: currentRedZoneFC.features.map(f => ({
+                type: 'Feature', properties: {}, geometry: f.geometry
+            }))
+        };
+        userActionLog.push({ action, fc: clean, ts: Date.now() });
+        if (userActionLog.length > 50) userActionLog = userActionLog.slice(-50);
+    } catch (e) { console.error('[userActionLog] push failed:', e); }
+}
+
+/** Откат последнего действия из лога (используется при undo). */
+function popUserAction() {
+    if (userActionLog.length > 1) userActionLog.pop();
+}
+
+// ================= ПРИМЕНЕНИЕ =================
+function applyInitialState() {
+    if (!currentRedZoneFC.features.length) {
+        redSetInstant(null);
+        greySetInstant(null);
+        return;
+    }
+    redSetInstant(currentRedZoneFC);
+    greySetInstant(buildGreyZone(currentRedZoneFC));
+}
+
+// ================= ИНИЦИАЛИЗАЦИЯ =================
+// NOTE: initApp() вызывается в самом конце скрипта, после объявления всех
+// const-ов (unitsPanel, unitSearchEl и т.д.). Если вызвать здесь, попадаем
+// в temporal dead zone: loadUnits() → renderUnitList() → access unitSearchEl
+// до его объявления в const.
+function normalizeSaved(parsed) {
+    if (!parsed) return null;
+    if (parsed.type === 'FeatureCollection') return parsed;
+    if (parsed.type === 'Feature') return turf.featureCollection([parsed]);
+    return null;
+}
+async function initApp() {
+    try {
+        const saved = localStorage.getItem('deepstate-map-save');
+        if (saved) {
+            try {
+                const parsed = JSON.parse(saved);
+                const fc = normalizeSaved(parsed);
+                if (fc && fc.features.length) {
+                    fc.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+                    currentRedZoneFC = fc;
+                }
+                applyInitialState();
+            } catch (e) {}
+        }
+        if (!currentRedZoneFC.features.length) await fetchRepoData();
+        // Сбрасываем лог действий: это стартовая точка для будущего Replay.
+        userActionLog = [];
+        pushUserAction('init');
+        loadUnits();
+        loadDrones();
+    } catch (e) { console.error('[initApp] fatal:', e); }
+    finally { showLoader('', false); }
+}
+async function fetchRepoData(forceReset) {
+    showLoader('Загрузка DeepState...', true);
+    try {
+        const gj = await fetchRawData();
+        let latest = null;
+        if (gj.features && gj.features.length) {
+            latest = gj.features[gj.features.length - 1];
+            let mx = 0;
+            for (let i = 0; i < gj.features.length; i++) {
+                const f = gj.features[i];
+                if (f.properties && f.properties.date) {
+                    // BUG FIX: переименовано с `t` → `parsedTime`, чтобы не
+                    // shadowить внешний timeoutId (const-t в for-loop проходит
+                    // из-за block-scope, но легко ловит ошибки при рефакторинге).
+                    const parsedTime = Date.parse(f.properties.date);
+                    if (parsedTime > mx) { mx = parsedTime; latest = f; }
+                }
+            }
+        }
+        if (latest) {
+            if (forceReset) pushUndo();
+            const simplified = simplifyFeature(canonical(latest), SIMPLIFY_DEEPSTATE);
+            if (simplified.properties) { delete simplified.properties.__bb; delete simplified.properties.__simplified; }
+            currentRedZoneFC = turf.featureCollection([simplified]);
+            applyInitialState();
+            // После загрузки данных с DeepState — стартовая точка лога.
+            userActionLog = [];
+            pushUserAction('init');
+        }
+    } catch (e) { console.error('[fetchRepo]', e); showToast('Не удалось загрузить данные'); }
+    finally { showLoader('', false); }
+}
+
+/**
+ * Чистая фетчилка: качает .gz, распаковывает, парсит, кэширует в rawGeoJSON.
+ * НЕ трогает currentRedZoneFC — это важно для Replay, чтобы юзерский захват
+ * территории не затирался последним слепком из GitHub при загрузке данных.
+ */
+async function fetchRawData() {
+    const c = new AbortController();
+    const timeoutId = setTimeout(() => c.abort(), 15000);
+    const res = await fetch('https://cdn.jsdelivr.net/gh/cyterat/deepstate-map-data@main/deepstate-map-data.geojson.gz', { signal: c.signal });
+    clearTimeout(timeoutId);
+    if (!res || !res.ok) throw new Error('HTTP');
+    const blob = await res.blob();
+    let txt;
+    if ('DecompressionStream' in window) {
+        try {
+            const ds = new DecompressionStream('gzip');
+            txt = await new Response(blob.stream().pipeThrough(ds)).text();
+        } catch (e) { txt = await decompressPako(blob); }
+    } else { txt = await decompressPako(blob); }
+    const gj = JSON.parse(txt);
+    return gj;
+}
+async function decompressPako(blob) {
+    const ab = await blob.arrayBuffer();
+    return pako.inflate(new Uint8Array(ab), { to: 'string' });
+}
+
+// ================= ПЕРИОДЫ (2014 / 2026) =================
+// 2026: данные с DeepState (cyterat/deepstate-map-data) — загружаются fetchRepoData.
+// 2014: реальный слой Harvard HURI "Occupied Territories of Donetsk and Luhansk (May, 2014)"
+//        через ArcGIS REST API. URL взят из загруженного пользователем файла.
+let currentPeriod = '2026';
+const PERIOD_CACHE = { '2014': null, '2026': null };
+
+// URL для получения данных за 2014 год. Harvard HURI ArcGIS REST.
+// Ранее я ошибочно проверил HEAD-запросом (вернул content-length: 0) и решил
+// что URL не работает. На самом деле GET-запрос возвращает полный GeoJSON.
+const URL_2014 = 'https://maps-huri-ws.net/arcgis/rest/services/religion/church_con_static/MapServer/2/query?where=1%3D1&outFields=*&f=geojson';
+
+function setPeriod(period) {
+    if (period === currentPeriod) return;
+    currentPeriod = period;
+    document.querySelectorAll('[data-period]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.period === period);
+    });
+    // Применяем данные периода
+    if (period === '2014') {
+        if (PERIOD_CACHE['2014']) {
+            // Уже загружено — мгновенно
+            applyPeriodData(PERIOD_CACHE['2014']);
+            showToast('Сценарий 2014 (из кэша)');
+        } else {
+            // Загружаем с Harvard HURI
+            showLoader('Загрузка данных за 2014...', true);
+            load2014Data()
+                .then(fc => {
+                    PERIOD_CACHE['2014'] = fc;
+                    applyPeriodData(fc);
+                    showToast(`Сценарий 2014 загружен: ${fc.features.length} полигонов`);
+                })
+                .catch(e => {
+                    console.error('[load2014]', e);
+                    showToast('Не удалось загрузить данные 2014');
+                })
+                .finally(() => showLoader('', false));
+        }
+    } else {
+        // 2026 — загружаем с DeepState (через fetchRepoData)
+        showLoader('Загрузка данных 2026...', true);
+        fetchRepoData(true).finally(() => showLoader('', false));
+        showToast('Сценарий 2026 — текущая линия фронта');
+    }
+}
+
+/**
+ * Загружает реальные данные за май 2014 с Harvard HURI ArcGIS REST API.
+ * Слой: "Occupied Territories of Donetsk and Luhansk (May, 2014)".
+ * Возвращает GeoJSON FeatureCollection.
+ */
+async function load2014Data() {
+    const res = await fetch(URL_2014);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const gj = await res.json();
+    if (!gj.features || !gj.features.length) throw new Error('No features');
+    // Канонизируем направление обводки (right-hand rule) и упрощаем
+    const features = gj.features.map(f => {
+        try {
+            return simplifyFeature(canonical(turf.feature(f.geometry, { ...f.properties })), SIMPLIFY_DEEPSTATE);
+        } catch (e) {
+            return turf.feature(f.geometry, { ...f.properties });
+        }
+    });
+    return turf.featureCollection(features);
+}
+
+function applyPeriodData(fc) {
+    currentRedZoneFC = fc || turf.featureCollection([]);
+    currentRedZoneFC.features.forEach(f => {
+        if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; }
+    });
+    applyInitialState();
+    // Сбрасываем лог действий — это новая стартовая точка
+    userActionLog = [];
+    pushUserAction('init');
+    // Сохраняем в localStorage БЕЗ логирования (init уже в логе, дубликат не нужен)
+    saveStateToStorage();
+    // Обновляем список юнитов — в периоде 2014 показываем 2014-era юниты
+    // (selUnit сбрасываем, т.к. выбранный юнит может не существовать в другом периоде)
+    selUnit = { ua: null, ru: null };
+    if (currentMode === 'units') renderUnitList();
+    // Сбрасываем place mode (если активен)
+    if (placeMode) {
+        placeMode = false;
+        if (btnPlace) btnPlace.classList.remove('active');
+        if (btnPlaceDrone) btnPlaceDrone.classList.remove('active');
+    }
+}
+
+// ================= РЕЖИМЫ / ВВОД =================
+function setMode(mode) {
+    if (animBusy) { showToast('Подождите…'); return; }
+
+    // BUG FIX: если юзер переключает режим или выключает его во время
+    // активной обводки — надо сбросить незавершённый лассо. Иначе на карте
+    // остаётся «висячий» polyline + pointerDot, а флаг isDrawing продолжает
+    // ловить следующий тач/мышь как продолжение старой линии.
+    const switchedAway = currentMode && currentMode !== mode;
+    const toggledOff  = currentMode === mode;
+    if (switchedAway || toggledOff) {
+        if (isDrawing) {
+            isDrawing = false;
+            trackLatLngs = [];
+            cleanupLasso();
+        }
+        // При выходе из units/drones — выключаем place mode
+        if (placeMode) {
+            placeMode = false;
+            if (btnPlace) btnPlace.classList.remove('active');
+            if (btnPlaceDrone) btnPlaceDrone.classList.remove('active');
+        }
+        // И сбрасываем mission mode (дрон выбран, ждёт цели) при выходе из drones
+        if (missionDrone) cancelMission();
+    }
+
+    currentMode = (currentMode === mode) ? null : mode;
+    btnOccupy.classList.toggle('active', currentMode === 'occupy');
+    btnLiberate.classList.toggle('active', currentMode === 'liberate');
+    btnUnits.classList.toggle('active', currentMode === 'units');
+    btnDrones.classList.toggle('active', currentMode === 'drones');
+    // Sub-панели: показываем только нужный
+    unitsPanel.classList.toggle('hidden', currentMode !== 'units');
+    if (typeof dronesPanelEl !== 'undefined' && dronesPanelEl) {
+        dronesPanelEl.classList.toggle('hidden', currentMode !== 'drones');
+    }
+
+    // Хинты подсказывают что делать в режиме.
+    if (currentMode === 'units' || currentMode === 'drones') {
+        const what = currentMode === 'units' ? 'юнит' : 'БПЛА';
+        hint.textContent = `Выбери ${what} → жми «⊕ Поставить» → кликай на карту. Карта двигается как обычно. ПКМ по маркеру — удалить.`;
+        hint.style.opacity = '1';
+        // В отличие от occupy/liberate, в units/drones перетаскивание карты работает
+        // (dragging.enable). placeMode — отдельная кнопка, включающая клик-для-установки.
+        map.dragging.enable(); map.touchZoom.enable(); mapContainer.style.cursor = placeMode ? 'crosshair' : '';
+    } else if (currentMode) {
+        hint.textContent = '1 палец/ЛКМ — обводка, 2 пальца/ПКМ — двигать';
+        hint.style.opacity = '1';
+        map.dragging.disable(); map.touchZoom.enable(); mapContainer.style.cursor = 'crosshair';
+    } else {
+        hint.style.opacity = '0';
+        map.dragging.enable(); map.touchZoom.enable(); mapContainer.style.cursor = '';
+    }
+}
+function getLatLngFromPoint(x, y) {
+    const r = mapContainer.getBoundingClientRect();
+    return map.containerPointToLatLng(L.point(x - r.left, y - r.top));
+}
+mapContainer.addEventListener('contextmenu', e => e.preventDefault());
+
+function showPointerDot(latlng) {
+    if (!map.hasLayer(pointerDot)) pointerDot.addTo(map);
+    pointerDot.setLatLng(latlng);
+}
+function hidePointerDot() {
+    if (map.hasLayer(pointerDot)) map.removeLayer(pointerDot);
+}
+function startDraw(latlng) {
+    isDrawing = true; trackLatLngs = [latlng];
+    lassoPolyline.setLatLngs(trackLatLngs);
+    if (!map.hasLayer(lassoPolyline)) lassoPolyline.addTo(map);
+    showPointerDot(latlng);
+}
+function continueDraw(latlng) {
+    // BUG FIX: защитная проверка — если трек пуст (стартовое состояние гонки),
+    // не падаем на `trackLatLngs[trackLatLngs.length - 1]` → undefined → throw.
+    if (!trackLatLngs.length) { startDraw(latlng); return; }
+    const last = trackLatLngs[trackLatLngs.length - 1];
+    if (map.latLngToContainerPoint(last).distanceTo(map.latLngToContainerPoint(latlng)) >= 3) {
+        trackLatLngs.push(latlng);
+        lassoPolyline.setLatLngs(trackLatLngs);
+        pointerDot.setLatLng(latlng);
+    }
+}
+function finishDraw() {
+    if (!isDrawing) return;
+    isDrawing = false;
+    if (trackLatLngs.length > 2) {
+        const pts = [...trackLatLngs]; trackLatLngs = [];
+        pushUndo();
+        processLasso(pts);
+    } else {
+        trackLatLngs = [];
+        cleanupLasso();
+    }
+}
+
+mapContainer.addEventListener('mousedown', e => {
+    if (animBusy) return;
+    if (e.button === 2) { isRmbPanning = true; lastRmbPos = { x: e.clientX, y: e.clientY }; mapContainer.style.cursor = 'grabbing'; return; }
+    if (e.button === 0 && currentMode) {
+        const ll = getLatLngFromPoint(e.clientX, e.clientY);
+        // Приоритет 1: mission mode — дрон ждёт назначения цели. Клик по карте → fly.
+        if (missionDrone) {
+            flyDroneTo(missionDrone, ll.lat, ll.lng);
+            cancelMission();
+            return;
+        }
+        // Приоритет 2: place mode — клик ставит юнит/БПЛА.
+        if (placeMode) {
+            if (currentMode === 'units') placeBrig(ll);
+            else if (currentMode === 'drones') placeDrone(ll);
+            return;
+        }
+        // Для occupy/liberate — рисуем лассо. Для units/drones без placeMode — ничего (drag работает)
+        if (currentMode === 'occupy' || currentMode === 'liberate') {
+            startDraw(ll);
+        }
+    }
+});
+window.addEventListener('mousemove', e => {
+    if (isRmbPanning) {
+        const dx = lastRmbPos.x - e.clientX, dy = lastRmbPos.y - e.clientY;
+        map.panBy([dx, dy], { animate: false }); lastRmbPos = { x: e.clientX, y: e.clientY }; return;
+    }
+    // В режиме юнитов лассо не рисуем
+    if (isDrawing && currentMode && currentMode !== 'units' && currentMode !== 'drones') continueDraw(getLatLngFromPoint(e.clientX, e.clientY));
+});
+window.addEventListener('mouseup', e => {
+    if (e.button === 2 && isRmbPanning) { isRmbPanning = false; mapContainer.style.cursor = currentMode ? (currentMode === 'units' || currentMode === 'drones' ? 'pointer' : 'crosshair') : ''; return; }
+    if (e.button === 0 && isDrawing && currentMode !== 'units' && currentMode !== 'drones') finishDraw();
+});
+mapContainer.addEventListener('touchstart', e => {
+    if (!currentMode || animBusy) return;
+    if (e.touches.length >= 2) {
+        if (isDrawing) { isDrawing = false; cleanupLasso(); }
+        return;
+    }
+    if (e.touches.length === 1) {
+        const t = e.touches[0];
+        const ll = getLatLngFromPoint(t.clientX, t.clientY);
+        // Mission mode — дрон ждёт назначения цели
+        if (missionDrone) {
+            e.preventDefault();
+            flyDroneTo(missionDrone, ll.lat, ll.lng);
+            cancelMission();
+            return;
+        }
+        // Place mode для юнитов/дронов
+        if (placeMode && (currentMode === 'units' || currentMode === 'drones')) {
+            e.preventDefault();
+            if (currentMode === 'units') placeBrig(ll);
+            else placeDrone(ll);
+            return;
+        }
+        if (currentMode === 'occupy' || currentMode === 'liberate') {
+            e.preventDefault();
+            startDraw(ll);
+        }
+    }
+}, { passive: false });
+mapContainer.addEventListener('touchmove', e => {
+    if (!currentMode || animBusy) return;
+    if (e.touches.length >= 2) {
+        if (isDrawing) { isDrawing = false; cleanupLasso(); }
+        return;
+    }
+    if (isDrawing && e.touches.length === 1 && currentMode !== 'units' && currentMode !== 'drones') {
+        e.preventDefault();
+        const t = e.touches[0];
+        continueDraw(getLatLngFromPoint(t.clientX, t.clientY));
+    }
+}, { passive: false });
+window.addEventListener('touchend', () => { if (isDrawing && currentMode !== 'units' && currentMode !== 'drones') finishDraw(); });
+
+// ================= ОБРАБОТКА =================
+function revertToPrevState() {
+    cancelAnimation();
+    const prev = undoStack.length > 0 ? undoStack[undoStack.length - 1] : null;
+    currentRedZoneFC = prev ? JSON.parse(JSON.stringify(prev)) : turf.featureCollection([]);
+    if (undoStack.length > 0) undoStack.pop();
+    currentRedZoneFC.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+    redMainSet(currentRedZoneFC.features.length ? simplifyFCForRender(currentRedZoneFC) : null);
+    greySetInstant(buildGreyZone(currentRedZoneFC));
+    cleanupLasso();
+}
+
+function processLasso(latLngs) {
+    if (animBusy) { revertToPrevState(); return; }
+    const tStart = performance.now();
+
+    const coords = latLngs.map(ll => [ll.lng, ll.lat]);
+    coords.push([latLngs[0].lng, latLngs[0].lat]);
+
+    let lasso;
+    try {
+        lasso = turf.polygon([coords]);
+        lasso = turf.cleanCoords(lasso);
+        lasso = turf.simplify(lasso, { tolerance: SIMPLIFY_LASSO, mutate: false });
+        lasso = turf.buffer(lasso, 0);
+        lasso = canonical(lasso);
+        invalidateBB(lasso);
+    } catch (e) { revertToPrevState(); return; }
+    if (!isValidPolygonFeature(lasso)) { revertToPrevState(); return; }
+
+    const aLasso = safeArea(lasso);
+    const worldArea = 510e12;
+    if (aLasso <= 0 || aLasso > worldArea * 0.3) { revertToPrevState(); return; }
+
+    const oldFC = currentRedZoneFC;
+    const aBefore = oldFC.features.reduce((s, f) => s + safeArea(f), 0);
+
+    if (currentMode === 'occupy') {
+        let fast;
+        try { fast = fcOccupyFast(oldFC, lasso); }
+        catch (e) { showToast('Ошибка операции'); revertToPrevState(); return; }
+
+        const aAfterApprox = aBefore + safeArea(fast.delta);
+        if (aAfterApprox > (aBefore + aLasso) * 1.15 || aAfterApprox < aBefore * 0.95) {
+            showToast('Ошибка операции, откат'); revertToPrevState(); return;
+        }
+
+        const finalFC = finalizeOccupy(oldFC, lasso, fast.overlaps, fast.rest);
+        currentRedZoneFC = finalFC;
+
+        const deltaFC = fast.delta ? toFC(fast.delta) : null;
+        if (!deltaFC || !deltaFC.features.length) {
+            redSetInstant(finalFC);
+            greySetInstant(buildGreyZone(finalFC));
+            setTimeout(cleanupLasso, 100);
+            saveState();
+            return;
+        }
+
+        // ===== ПРЕДВЫЧИСЛЕНИЯ (вне rAF) =====
+        const oldSimplified   = simplifyFCForRender(oldFC);
+        const deltaSimplified = simplifyFCForRender(deltaFC);
+        const finalSimplified = simplifyFCForRender(finalFC);
+        // Серая — СРАЗУ финальная (юзер хочет её с самого начала, без пост-обновления).
+        const finalGrey       = buildGreyZone(finalFC);
+
+        // Ставим слои в стартовое положение
+        redMainSet(oldSimplified);         // старая красная (до победного финала)
+        redDeltaSet(deltaSimplified);      // delta сверху — её маскирует CSS
+        greySetInstant(finalGrey);         // серая — сразу финальная, БОЛЬШЕ НЕ ТРОГАЕМ
+
+        const tSetup = performance.now() - tStart;
+        if (tSetup > 600) console.warn('[perf] occupy setup took', Math.round(tSetup), 'ms (>600ms budget)');
+
+        // Seed: ближайшая точка границы oldFC к центроиду delta
+        const seedCoords = findSeedPoint(oldFC, deltaFC);
+        if (!seedCoords) {
+            redMainSet(finalSimplified);
+            cleanupLasso();
+            saveState();
+            return;
+        }
+
+        const maxR = computeMaxRadiusPx(deltaFC, seedCoords);
+
+        animateMaskReveal({
+            mode: 'occupy',
+            seedLngLat: seedCoords,
+            maxRadiusPx: maxR,
+            finalSimplified
+        });
+
+        saveState();
+        console.log('[timing] occupy TOTAL:', Math.round(performance.now() - tStart), 'ms');
+        return;
+    }
+
+    if (currentMode === 'liberate') {
+        if (!oldFC.features.length) { showToast('Нечего освобождать'); return; }
+
+        let fast;
+        try { fast = fcLiberateFast(oldFC, lasso); }
+        catch (e) { showToast('Ошибка операции'); revertToPrevState(); return; }
+
+        const aAfterApprox = fast.fastFC.features.reduce((s, f) => s + safeArea(f), 0);
+        if (aAfterApprox > aBefore * 1.05 || (aBefore - aAfterApprox) > aLasso * 1.5 + aBefore * 0.03) {
+            showToast('Ошибка операции, откат'); revertToPrevState(); return;
+        }
+
+        const finalFC = mergeAllTouching(fast.fastFC);
+        currentRedZoneFC = finalFC;
+
+        const deltaFC = fast.delta ? toFC(fast.delta) : null;
+        if (!deltaFC || !deltaFC.features.length) {
+            redSetInstant(finalFC);
+            greySetInstant(buildGreyZone(finalFC));
+            setTimeout(cleanupLasso, 100);
+            saveState();
+            return;
+        }
+
+        // ===== ПРЕДВЫЧИСЛЕНИЯ (вне rAF) =====
+        const finalSimplified = simplifyFCForRender(finalFC);
+        const deltaSimplified = simplifyFCForRender(deltaFC);
+        // Серая — СРАЗУ финальная.
+        const finalGrey       = buildGreyZone(finalFC);
+
+        // ВАЖНО: на liberate redMain УЖЕ финальный — «стирание» delta обнажает
+        // финальную (уже без удаляемой части) красную. Моргания нет.
+        redMainSet(finalSimplified);
+        redDeltaSet(deltaSimplified);   // delta сверху, маска её съедает изнутри круга
+        greySetInstant(finalGrey);      // серая — сразу финальная, БОЛЬШЕ НЕ ТРОГАЕМ
+
+        const tSetup = performance.now() - tStart;
+        if (tSetup > 600) console.warn('[perf] liberate setup took', Math.round(tSetup), 'ms (>600ms budget)');
+
+        // Seed: ближайшая точка границы newFC к центроиду delta
+        const seedCoords = findSeedPoint(finalFC, deltaFC);
+        if (!seedCoords) {
+            cleanupLasso();
+            saveState();
+            return;
+        }
+
+        const maxR = computeMaxRadiusPx(deltaFC, seedCoords);
+
+        animateMaskReveal({
+            mode: 'liberate',
+            seedLngLat: seedCoords,
+            maxRadiusPx: maxR,
+            finalSimplified
+        });
+
+        saveState();
+        console.log('[timing] liberate TOTAL:', Math.round(performance.now() - tStart), 'ms');
+        return;
+    }
+}
+
+// ================= УПРАВЛЕНИЕ =================
+function pushUndo() {
+    const snap = currentRedZoneFC.features.length ? JSON.parse(JSON.stringify(currentRedZoneFC)) : null;
+    if (snap) snap.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+    undoStack.push(snap);
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
+}
+function popUndo() {
+    if (!undoStack.length) { showToast('Нечего отменять'); return; }
+    cancelAnimation();
+    const prev = undoStack.pop();
+    currentRedZoneFC = prev || turf.featureCollection([]);
+    currentRedZoneFC.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+    redMainSet(currentRedZoneFC.features.length ? simplifyFCForRender(currentRedZoneFC) : null);
+    greySetInstant(buildGreyZone(currentRedZoneFC));
+    cleanupLasso();
+    // Синхронно откатываем и лог действий: undo «выкидывает» последнее действие
+    popUserAction();
+    showToast('Отменено :)');
+}
+
+// ================= REPLAY =================
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function showReplayStatus(text, current, total) {
+    const el = document.getElementById('replay-status');
+    document.getElementById('replay-text').textContent = text;
+    document.getElementById('replay-progress').textContent = total ? `${current}/${total}` : '';
+    el.classList.remove('hidden');
+}
+function hideReplayStatus() {
+    document.getElementById('replay-status').classList.add('hidden');
+}
+
+/**
+ * Replay теперь проигрывает ИСТОРИЮ ДЕЙСТВИЙ ПОЛЬЗОВАТЕЛЯ (init + каждый
+ * occupy/liberate + каждый undo), а НЕ 310 исторических слепков с DeepState.
+ *
+ * Лог userActionLog уже ведётся pushUserAction() на каждом изменении
+ * состояния. Здесь — просто итерируемся по нему и применяем каждый снапшот.
+ */
+function startReplay() {
+    if (animBusy) { showToast('Подождите…'); return; }
+    if (replayActive) { stopReplay(false); return; }
+
+    // Если drawing-режим включён — выключаем (он мешает проигрыванию)
+    if (currentMode) setMode(currentMode);
+
+    if (!userActionLog.length) { showToast('Нет действий для replay'); return; }
+    // Если в логе только init-снапшот (одно состояние) — проигрывать нечего
+    if (userActionLog.length < 2) { showToast('Сделайте хотя бы 1 действие (захват/освобождение) перед replay'); return; }
+
+    replayActive = true;
+    const myToken = ++replayToken;
+
+    // Сохраняем текущее состояние — вернёмся к нему после stopReplay
+    try {
+        replaySnapshotBefore = JSON.parse(JSON.stringify(currentRedZoneFC));
+        replaySnapshotBefore.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+    } catch (e) { replaySnapshotBefore = null; }
+
+    // Кнопку превращаем в Стоп
+    btnReplay.textContent = '⏹ Стоп';
+    btnReplay.classList.add('active');
+
+    showReplayStatus('Replay: старт…', 0, userActionLog.length);
+    runReplayFrames(myToken);
+}
+
+async function runReplayFrames(token) {
+    // 1. Плавный fade out текущего состояния карты (1 → 0) перед началом проигрывания.
+    //    Раньше код сразу ставил empty red zone и делал fade in из 0 — это давало
+    //    рваный скачок «всё пропало → пусто → что-то появилось». Теперь сначала
+    //    плавно прячем то что есть, потом уже начинаем воспроизведение.
+    const introFadeMs = Math.min(replayFrameMs * 0.5, 400);
+    await fadeRedPane(1, 0, introFadeMs);
+    if (token !== replayToken) return;
+    // Очищаем карту
+    currentRedZoneFC = turf.featureCollection([]);
+    redSetInstant(null);
+    greySetInstant(null);
+    if (token !== replayToken) return;
+    await sleep(150);
+    if (token !== replayToken) return;
+
+    // 2. Проигрываем кадры лога: fade in новый кадр → hold → fade out перед след.
+    const fadeMs = Math.min(replayFrameMs * 0.35, 280);
+    const holdMs = Math.max(200, replayFrameMs - fadeMs * 2);
+
+    for (let i = 0; i < userActionLog.length; i++) {
+        if (token !== replayToken) return;
+
+        const item = userActionLog[i];
+        // Читаемое название действия для баннера
+        const actionLabel = ({
+            init:      'Старт',
+            occupy:    'Оккупация',
+            liberate:  'Освобождение',
+            undo:      'Отмена',
+            edit:      'Изменение'
+        })[item.action] || item.action;
+        showReplayStatus(`Replay: ${actionLabel}`, i + 1, userActionLog.length);
+
+        // Применяем снапшот из лога. Глубокий клон, чтобы не мутировать оригинал.
+        try {
+            currentRedZoneFC = JSON.parse(JSON.stringify(item.fc));
+            currentRedZoneFC.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+        } catch (e) { console.error('[replay] frame failed:', e); continue; }
+
+        redSetInstant(currentRedZoneFC);
+        // Серую зону во время replay НЕ пересчитываем (buildGreyZone дорогой:
+        // turf.buffer на каждом кадре даст +300ms). Грэй скрыт, юзер видит
+        // только движение красной границы — это и есть суть replay.
+        greySetInstant(null);
+
+        // Плавное появление кадра (fade in 0 → 1)
+        await fadeRedPane(0, 1, fadeMs);
+        if (token !== replayToken) return;
+        // Hold — кадр виден некоторое время
+        await sleep(holdMs);
+        if (token !== replayToken) return;
+        // Плавное исчезновение перед следующим кадром (fade out 1 → 0)
+        await fadeRedPane(1, 0, fadeMs);
+        if (token !== replayToken) return;
+    }
+
+    if (token === replayToken) stopReplay(true);
+}
+
+/**
+ * Плавный fade opacity для paneRedMain. Использует CSS transition,
+ * requestAnimationFrame для синхронизации, и промис для await.
+ * Без «рваности» — opacity плавно меняется от from до to за ms миллисекунд.
+ */
+function fadeRedPane(from, to, ms) {
+    return new Promise(resolve => {
+        const pane = paneRedMain;
+        if (!pane) { resolve(); return; }
+        const start = performance.now();
+        const step = (now) => {
+            const t = Math.min(1, (now - start) / ms);
+            const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+            const v = from + (to - from) * eased;
+            pane.style.opacity = String(v);
+            if (t < 1) requestAnimationFrame(step);
+            else { pane.style.opacity = ''; resolve(); }
+        };
+        requestAnimationFrame(step);
+    });
+}
+
+function stopReplay(completed) {
+    replayToken++;
+    replayActive = false;
+
+    // Сбрасываем opacity панели (вдруг зависла на полпути fade)
+    if (paneRedMain) paneRedMain.style.opacity = '';
+
+    btnReplay.textContent = '▶ Replay';
+    btnReplay.classList.remove('active');
+
+    hideReplayStatus();
+
+    // Восстанавливаем состояние, которое было до запуска replay.
+    // Включая пересчёт серой зоны (один раз, не страшно).
+    if (replaySnapshotBefore) {
+        try {
+            currentRedZoneFC = JSON.parse(JSON.stringify(replaySnapshotBefore));
+            currentRedZoneFC.features.forEach(f => { if (f.properties) { delete f.properties.__bb; delete f.properties.__simplified; } });
+            applyInitialState();
+        } catch (e) { console.error('[replay] restore failed:', e); }
+        replaySnapshotBefore = null;
+    }
+
+    showToast(completed ? 'Replay завершён' : 'Replay остановлен');
+}
+
+// ================= ЮНИТЫ / БРИГАДЫ =================
+// Список юнитов взят из загруженного пользователем frontlinemap_update5.html.
+// Названия на украинском (как в оригинале) — но это просто labels. Логотипы
+// BRIG_IMG — реальные URL, найденные через z-ai image-search. Для юнитов без
+// известного логотипа — fallback на SVG-символ по типу (SYM/brigType).
+
+const BRIG = {
+    ua: [
+        ['14', '14 ОМБр — імені князя Романа Великого'], ['24', '24 ОМБр — імені короля Данила'],
+        ['28', '28 ОМБр — імені Лицарів Зимового походу'], ['30', '30 ОМБр — імені князя Костянтина Острозького'],
+        ['33', '33 ОМБр — 33-тя окрема механізована бригада'], ['47', '47 ОМБр «Магура»'],
+        ['53', '53 ОМБр — імені князя Володимира Мономаха'], ['54', '54 ОМБр — імені гетьмана Івана Мазепи'],
+        ['56', '56 ОМПБр — 56-та окрема мотопіхотна бригада'], ['57', '57 ОМПБр — імені кошового отамана Костя Гордієнка'],
+        ['58', '58 ОМПБр — імені гетьмана Івана Виговського'], ['59', '59 ОМПБр — імені Якова Гандзюка'],
+        ['60', '60 ОМБр — 60-та окрема механізована бригада'], ['62', '62 ОМБр — 62-га окрема механізована бригада'],
+        ['63', '63 ОМБр — 63-тя окрема механізована бригада'], ['65', '65 ОМБр — 65-та окрема механізована бригада'],
+        ['66', '66 ОМБр — 66-та окрема механізована бригада'], ['67', '67 ОМБр — 67-ма окрема механізована бригада'],
+        ['68', '68 ОЄБр — імені Олекси Довбуша (єгерська)'], ['71', '71 ОЄБр — 71-ша окрема єгерська бригада'],
+        ['72', '72 ОМБр — імені Чорних Запорожців'], ['92', '92 ОШБр — імені кошового отамана Івана Сірка'],
+        ['93', '93 ОМБр «Холодний Яр»'], ['100', '100 ОМБр — 100-ма окрема механізована бригада'],
+        ['110', '110 ОМБр — 110-та окрема механізована бригада'], ['115', '115 ОМБр — 115-та окрема механізована бригада'],
+        ['116', '116 ОМБр — 116-та окрема механізована бригада'], ['118', '118 ОМБр — 118-ма окрема механізована бригада'],
+        ['1 ТБр', '1 ОТБр — 1-ша окрема танкова бригада'], ['4 ТБр', '4 ОТБр — 4-та окрема танкова бригада'],
+        ['17 ТБр', '17 ОТБр — 17-та окрема танкова бригада'],
+        ['25', '25 ОПДБр — 25-та окрема повітрянодесантна бригада'], ['46', '46 ОАеМБр — 46-та окрема аеромобільна бригада'],
+        ['77', '77 ОАеМБр — 77-ма окрема аеромобільна бригада'], ['78', '78 ОДШП — 78-й окремий десантно-штурмовий полк'],
+        ['79', '79 ОДШБр — 79-та окрема десантно-штурмова бригада'], ['80', '80 ОДШБр — 80-та окрема десантно-штурмова бригада'],
+        ['81', '81 ОАеМБр — 81-ша окрема аеромобільна бригада'], ['82', '82 ОДШБр — 82-га окрема десантно-штурмова бригада'],
+        ['95', '95 ОДШБр — 95-та окрема десантно-штурмова бригада'],
+        ['35', '35 ОБрМП — 35-та окрема бригада морської піхоти'], ['36', '36 ОБрМП — 36-та окрема бригада морської піхоти'],
+        ['37', '37 ОБрМП — 37-ма окрема бригада морської піхоти'], ['38', '38 ОБрМП — 38-ма окрема бригада морської піхоти'],
+        ['3 ШБр', '3 ОШБр — 3-тя окрема штурмова бригада'], ['5 ШБр', '5 ОШБр — 5-та окрема штурмова бригада'],
+        ['10', '10 ОГШБр «Едельвейс» — гірсько-штурмова'], ['128', '128 ОГШБр — Закарпатська гірсько-штурмова'],
+        ['26 АБр', '26 ОАБр — 26-та окрема артилерійська бригада'], ['40 АБр', '40 ОАБр — 40-ва окрема артилерійська бригада'],
+        ['43 АБр', '43 ОМАБр — 43-тя окрема важка артилерійська бригада'], ['44 АБр', '44 ОАБр — 44-та окрема артилерійська бригада'],
+        ['45 АБр', '45 ОАБр — 45-та окрема артилерійська бригада'], ['55 АБр', '55 ОАБр «Запорізька Січ»'],
+        ['Азов', '12 бригада спеціального призначення «Азов» (НГУ)'], ['Хартія', '13 бригада НГУ «Хартія»'],
+        ['Калина', '14 бригада НГУ «Червона Калина»'], ['Кара-Даг', '15 бригада НГУ «Кара-Даг»'],
+        ['Рубіж', '4 бригада оперативного призначення НГУ «Рубіж»'], ['Омега', 'Омега — спецпризначення НГУ'],
+        ['Скеля', '3 полк спеціального призначення «Скеля»'], ['Бохдан', '1 президентська бригада імені гетьмана Богдана Хмельницького'],
+        ['Лють', 'Штурмова бригада «Лють» (ДПСУ)'], ['Кракен', 'Окремий загін спеціального призначення «Кракен»'],
+        ['ГУР', 'ГУР МОУ — Головне управління розвідки'], ['ССО', 'Сили спеціальних операцій ЗСУ']
+    ],
+    ru: [
+        ['1 ГвТА', '1-я гвардейская танковая армия'], ['2 МСД', '2-я гвардейская мотострелковая дивизия «Таманская»'],
+        ['3 МСД', '3-я мотострелковая дивизия'], ['4 ТД', '4-я гвардейская танковая дивизия «Кантемировская»'],
+        ['47 ТД', '47-я гвардейская танковая дивизия'], ['20 МСД', '20-я гвардейская мотострелковая дивизия'],
+        ['144 МСД', '144-я гвардейская мотострелковая дивизия'], ['150 МСД', '150-я мотострелковая дивизия'],
+        ['7 ДШД', '7-я гвардейская десантно-штурмовая дивизия'], ['76 ДШД', '76-я гвардейская десантно-штурмовая дивизия'],
+        ['98 ВДД', '98-я гвардейская воздушно-десантная дивизия'], ['106 ВДД', '106-я гвардейская воздушно-десантная дивизия'],
+        ['11 ДШБр', '11-я отдельная гвардейская десантно-штурмовая бригада'], ['31 ДШБр', '31-я отдельная гвардейская десантно-штурмовая бригада'],
+        ['56 ДШБр', '56-я отдельная гвардейская десантно-штурмовая бригада'], ['83 ДШБр', '83-я отдельная гвардейская десантно-штурмовая бригада'],
+        ['5 ТБр', '5-я отдельная гвардейская танковая бригада'],
+        ['15 МСБр', '15-я отдельная мотострелковая бригада'], ['21 МСБр', '21-я отдельная мотострелковая бригада'],
+        ['25 МСБр', '25-я отдельная мотострелковая бригада'], ['27 МСБр', '27-я отдельная гвардейская мотострелковая бригада'],
+        ['33 МСБр', '33-я отдельная горная мотострелковая бригада'], ['34 МСБр', '34-я отдельная горная мотострелковая бригада'],
+        ['37 МСБр', '37-я отдельная гвардейская мотострелковая бригада'], ['55 МСБр', '55-я отдельная горная мотострелковая бригада'],
+        ['57 МСБр', '57-я отдельная гвардейская мотострелковая бригада'], ['64 МСБр', '64-я отдельная гвардейская мотострелковая бригада'],
+        ['74 МСБр', '74-я отдельная гвардейская мотострелковая бригада'], ['79 МСБр', '79-я отдельная гвардейская мотострелковая бригада'],
+        ['138 МСБр', '138-я отдельная гвардейская мотострелковая бригада'], ['200 МСБр', '200-я отдельная мотострелковая бригада'],
+        ['205 МСБр', '205-я отдельная мотострелковая бригада'],
+        ['40 МП', '40-я отдельная бригада морской пехоты'], ['61 МП', '61-я отдельная бригада морской пехоты'],
+        ['155 МП', '155-я отдельная бригада морской пехоты'], ['336 МП', '336-я отдельная бригада морской пехоты'],
+        ['810 МП', '810-я отдельная бригада морской пехоты'],
+        ['2 СпП', '2-я отдельная бригада специального назначения'], ['3 СпП', '3-я отдельная бригада специального назначения'],
+        ['10 СпП', '10-я отдельная бригада специального назначения'], ['14 СпП', '14-я отдельная бригада специального назначения'],
+        ['16 СпП', '16-я отдельная бригада специального назначения'], ['22 СпП', '22-я отдельная бригада специального назначения'],
+        ['24 СпП', '24-я отдельная бригада специального назначения'], ['45 СпП', '45-я отдельная бригада специального назначения ВДВ'],
+        ['346 СпП', '346-я отдельная бригада специального назначения'], ['Ахмат', 'Спецназ «Ахмат»'],
+        ['1 АК', '1-й армейский корпус (ДНР)'], ['2 АК', '2-й армейский корпус (ЛНР)'],
+        ['Сомали', 'Батальон «Сомали»'], ['Спарта', 'Батальон «Спарта»'], ['Восток', 'Батальон «Восток»'], ['Пятнашка', 'Батальон «Пятнашка»']
+    ]
+};
+
+// ================= ЮНИТЫ ЭПОХИ 2014 =================
+// Добровольческие батальоны и подразделения, существовавшие в 2014 году
+// (на момент аннексии Крыма и начала боёв в Донбассе). Активируются только
+// в периоде 2014. В 2026 многие из них расформированы или слиты в бригады.
+const BRIG_2014 = {
+    ua: [
+        // Добровольческие батальоны Минобороны Украины (лето 2014)
+        ['Айдар', 'Батальон «Айдар» (добровольческий, МОУ)'],
+        ['Донбасс', 'Батальон «Донбасс» (добровольческий, МОУ)'],
+        ['Киев-1', 'Батальон «Киев-1» (МВД)'],
+        ['Киев-2', 'Батальон «Киев-2» (МВД)'],
+        ['Миротворець', 'Батальон «Миротворец» (МВД)'],
+        ['Чернігів', 'Батальон «Чернигов» (МОУ)'],
+        ['Дніпро-1', 'Полк патрульной службы «Днепр-1» (МВД)'],
+        ['Дніпро-2', 'Батальон «Днепр-2» (МВД)'],
+        ['Святий Миколай', 'Батальон «Святой Николай» (МОУ)'],
+        ['Шахтарськ', 'Батальон «Шахтёрск» (МВД, расформирован)'],
+        ['Кривбас', 'Батальон «Кривбасс» (МОУ)'],
+        ['Полтава', 'Батальон «Полтава» (МОУ)'],
+        ['Січеслав', 'Батальон «Сичеслав» (МОУ)'],
+        ['Харків-1', 'Батальон «Харьков-1» (МВД)'],
+        ['Харків-2', 'Батальон «Харьков-2» (МВД)'],
+        ['Тімур', 'Батальон «Тимур» (МОУ, расформирован)'],
+        ['Буковинський', 'Батальон «Буковинский» (МОУ)'],
+        ['Тернопіль', 'Батальон «Тернополь» (МОУ)'],
+        ['Вінниця', 'Батальон «Винница» (МОУ)'],
+        ['Житомир', 'Батальон «Житомир» (МОУ)'],
+        // Полки НГУ (Нацгвардии, до реформы 2015-2016 гг)
+        ['Азов-14', 'Батальон «Азов» (НГУ, май 2014)'],
+        ['Київська Русь', 'Полк НГУ «Киевская Русь»'],
+        ['Кальміус', 'Полк НГУ «Кальмиус»'],
+        ['Черкаси', 'Батальон НГУ «Черкассы»'],
+        ['Вега', 'Подразделение НГУ «Вега»'],
+        ['Янгаполк', 'Батальон НГУ «Янгполяки»'],
+        // Регулярные бригады, существовавшие в 2014
+        ['1 АТБр', '1-я отдельная танковая бригада (переформирована)'],
+        ['72 ОМБр-14', '72-я отдельная механизированная бригада'],
+        ['79 ОАэМБр-14', '79-я отдельная аэромобильная бригада'],
+        ['25 ВДБр-14', '25-я отдельная воздушно-десантная бригада'],
+        ['95 ОАеМБр-14', '95-я отдельная аэромобильная бригада'],
+        ['80 ОАеМБр-14', '80-я отдельная аэромобильная бригада'],
+        // Спецназ СБУ
+        ['Альфа', 'Спецподразделение СБУ «Альфа»']
+    ],
+    ru: [
+        // Батальоны ДНР, созданные в 2014
+        ['Сомали-14', 'Батальон «Сомали» (ДНР, 2014)'],
+        ['Спарта-14', 'Батальон «Спарта» (ДНР, 2014)'],
+        ['Восток-14', 'Батальон «Восток» (ДНР, 2014)'],
+        ['Пятнашка-14', 'Батальон «Пятнашка» (ДНР, 2014)'],
+        ['Кальміус-14', 'Батальон «Кальмиус» (ДНР, 2014)'],
+        ['Оплот', 'Батальон «Оплот» (ДНР, 2014)'],
+        ['Русь-14', 'Батальон «Русь» (ДНР)'],
+        ['Сміла', 'Батальон «Смила»'],
+        // Батальоны ЛНР (2014)
+        ['Заря', 'Батальон «Заря» (ЛНР, 2014)'],
+        ['Лешый', 'Батальон «Леший» (ЛНР)'],
+        ['Дон-14', 'Батальон «Дон» (ЛНР)'],
+        ['Одесса-14', 'Батальон «Одесса» (формальный, ЛНР)'],
+        ['Бат-1', 'Батальон «1-й Отдельный Штурмовой»'],
+        // Российские регулярные части, действовавшие в 2014
+        ['18 ОМСБр-14', '18-я отдельная гвардейская мотострелковая бригада'],
+        ['33 ОГСпБ-14', '33-я отдельная гвардейская мотострелковая бригада (горная)'],
+        ['31 ОДШБр-14', '31-я отдельная гвардейская десантно-штурмовая бригада'],
+        ['7 ВДД-14', '7-я гвардейская десантно-штурмовая дивизия'],
+        ['20 ОМСБр-14', '20-я отдельная гвардейская мотострелковая бригада (придана Крыму)'],
+        ['810 ОБрМП-14', '810-я отдельная бригада морской пехоты (Крым)'],
+        // «Вежливые люди» / ВС РФ в Крыму (март 2014)
+        ['Вежливые', '«Вежливые люди» (Крым, март 2014)'],
+        // Чеченские кадыровцы в 2014
+        ['Ахмат-14', 'Полк полиции «Ахмат» (2014, тогда «Север»/«Юг»)'],
+        ['Восток-Чечня', 'Батальон «Восток» (Чечня, 2014)']
+    ]
+};
+
+// Картинки эмблем убраны по просьбе юзера — используем только SVG-символы.
+// Классификация по типу для SVG-символа. По мотивам оригинала из frontlinemap_update5.html,
+// расширена под русские названия.
+function brigType(label, name) {
+    const s = label + ' ' + name;
+    if (/СпП|специальн|ССО|ГУР|Омега|Скеля|Кракен|Ахмат/.test(s)) return 'spec';
+    if (/морск\S* пехот|\bМП\b|ОБрМП|ОБрМП/.test(s)) return 'mar';
+    if (/ДШ|ПДБр|ВДД|десант|аеромоб|АеМБр|АеБр/.test(s)) return 'air';
+    if (/ГШБр|горн/.test(s)) return 'mtn';
+    if (/ТБр|ТД|ГвТА|танков/.test(s)) return 'tank';
+    if (/АБр|артиллер/.test(s)) return 'art';
+    if (/МБр|МСБр|МСД|МПБр|мотопех|механиз|мотострел/.test(s)) return 'mech';
+    return 'inf';
+}
+const X_ = '<path d="M3 1.5l18 13M21 1.5L3 14.5"/>';
+const SYM = {
+    inf:  X_,
+    mech: X_ + '<ellipse cx="12" cy="8" rx="6" ry="3.6"/>',
+    tank: '<ellipse cx="12" cy="8" rx="8.5" ry="4.8"/><path d="M6 8h12"/>',
+    air:  '<path d="M3 7.5A9 6.5 0 0 1 21 7.5M3 7.5L12 15M21 7.5L12 15M12 1v14"/>',
+    mar:  '<circle cx="12" cy="3.2" r="1.7"/><path d="M12 5v9.5M7.5 8h9M5 10.5c0 3 3 4 7 4s7-1 7-4"/>',
+    art:  '<circle cx="12" cy="8" r="4.2" fill="currentColor"/>',
+    mtn:  '<path d="M2 15L9.5 3l3.2 5.2L16 5l6 10z"/>',
+    spec: '<path fill="currentColor" d="M12 1.1L13.8 6.1 19.1 6.3 14.9 9.6 16.4 14.7 12 11.7 7.6 14.7 9.1 9.6 4.9 6.3 10.2 6.1z"/>'
+};
+const brigSvg = (label, name) => '<svg viewBox="0 0 24 16" xmlns="http://www.w3.org/2000/svg">' + SYM[brigType(label, name)] + '</svg>';
+
+// State
+const unitLayer = L.layerGroup().addTo(map);
+const unitsPanel = document.getElementById('units-panel');
+const unitListEl = document.getElementById('unit-list');
+const unitSearchEl = document.getElementById('unit-search');
+const btnUnits = document.getElementById('btn-units');
+const btnDrones = document.getElementById('btn-drones');
+const btnTargets = document.getElementById('btn-targets');
+let brigs = []; // each: { side, label, name, lat, lng, m }
+let unitSide = 'ua'; // активная вкладка
+let selUnit = { ua: null, ru: null }; // выбранный юнит по стороне
+
+function switchUnitSide(side) {
+    unitSide = side;
+    document.querySelectorAll('.unit-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.side === side);
+    });
+    renderUnitList();
+}
+
+function renderUnitList() {
+    const q = (unitSearchEl.value || '').trim().toLowerCase();
+    // В периоде 2014 показываем юниты эпохи 2014, иначе — современные (2026)
+    const list = (currentPeriod === '2014' ? BRIG_2014 : BRIG)[unitSide] || [];
+    const filtered = q ? list.filter(([label, name]) => (label + ' ' + name).toLowerCase().includes(q)) : list;
+    unitListEl.innerHTML = '';
+    const sel = selUnit[unitSide];
+    for (const [label, name] of filtered) {
+        const item = document.createElement('div');
+        item.className = 'unit-item ' + unitSide + (sel && sel.label === label ? ' active' : '');
+        // Только SVG-символ (картинки убраны)
+        const thumb = document.createElement('span');
+        thumb.className = 'usym';
+        thumb.innerHTML = brigSvg(label, name);
+        const lab = document.createElement('span');
+        lab.className = 'ulab';
+        lab.textContent = label;
+        const tipWrap = document.createElement('span');
+        tipWrap.style.flex = '1';
+        tipWrap.style.overflow = 'hidden';
+        tipWrap.style.textOverflow = 'ellipsis';
+        tipWrap.style.whiteSpace = 'nowrap';
+        tipWrap.textContent = name;
+        item.append(thumb, lab, tipWrap);
+        item.onclick = () => {
+            selUnit[unitSide] = { label, name };
+            renderUnitList();
+            if (currentMode !== 'units') setMode('units');
+            // Авто-включение режима установки: юзер выбрал юнит → скорее всего
+            // сразу захочет поставить. Если уже в режиме units но placement off —
+            // включаем placement.
+            if (currentMode === 'units' && !placeMode) togglePlaceMode();
+        };
+        unitListEl.appendChild(item);
+    }
+    if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'padding:6px;font-size:10px;color:#888;text-align:center';
+        empty.textContent = 'Не найдено';
+        unitListEl.appendChild(empty);
+    }
+}
+
+function buildUnitMarkerIcon(side, label, name) {
+    const el = document.createElement('div');
+    el.className = 'unit-marker ' + side;
+    // Только SVG-символ (картинки убраны)
+    const sym = document.createElement('span');
+    sym.className = 'usym';
+    sym.innerHTML = brigSvg(label, name);
+    el.appendChild(sym);
+    const lab = document.createElement('span');
+    lab.className = 'ulab';
+    lab.textContent = label;
+    if (label.length > 4) lab.style.fontSize = '8px';
+    el.appendChild(lab);
+    return L.divIcon({ className: '', html: el, iconSize: [46, 50], iconAnchor: [23, 25] });
+}
+
+function addBrig(side, label, name, lat, lng) {
+    const m = L.marker([lat, lng], {
+        draggable: true, keyboard: false, zIndexOffset: 600,
+        icon: buildUnitMarkerIcon(side, label, name)
+    }).addTo(unitLayer);
+    m.bindTooltip(name, { direction: 'top', offset: [0, -22] });
+    const rec = { side, label, name, lat, lng, m };
+    m.on('dragend', () => {
+        const q = m.getLatLng();
+        rec.lat = q.lat; rec.lng = q.lng;
+        saveUnits();
+    });
+    m.on('contextmenu', e => {
+        e.originalEvent.preventDefault();
+        unitLayer.removeLayer(m);
+        brigs = brigs.filter(x => x !== rec);
+        saveUnits();
+    });
+    m.on('click', () => {
+        // ПКМ или клик — удалить. ЛКМ по существующему юниту тоже удаляет,
+        // чтобы на мобиле было удобно. Перетаскивание — drag, не клик.
+        unitLayer.removeLayer(m);
+        brigs = brigs.filter(x => x !== rec);
+        saveUnits();
+    });
+    brigs.push(rec);
+    return rec;
+}
+
+function placeBrig(ll) {
+    const b = selUnit[unitSide];
+    if (!b) { showToast('Сначала выбери юнит из списка'); return; }
+    addBrig(unitSide, b.label, b.name, ll.lat, ll.lng);
+    saveUnits();
+}
+
+function saveUnits() {
+    try {
+        const clean = brigs.map(b => ({ side: b.side, label: b.label, name: b.name, lat: b.lat, lng: b.lng }));
+        localStorage.setItem('territory-units', JSON.stringify(clean));
+    } catch (e) {}
+}
+function loadUnits() {
+    try {
+        const saved = localStorage.getItem('territory-units');
+        if (!saved) { renderUnitList(); return; }
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) {
+            brigs = [];
+            for (const u of arr) {
+                if (u && u.side && u.label && u.name && isFinite(u.lat) && isFinite(u.lng)) {
+                    addBrig(u.side, u.label, u.name, u.lat, u.lng);
+                }
+            }
+        }
+        renderUnitList();
+    } catch (e) { renderUnitList(); }
+}
+
+// Стартовая отрисовка списка юнитов (даже если панель скрыта — данные готовы).
+renderUnitList();
+
+// ================= PLACE MODE (для юнитов и БПЛА) =================
+// Юзер жаловался что установка юнитов через ЛКМ неудобна — ЛКМ конфликтует
+// с перемещением карты. Решение: кнопка «⊕ Поставить» в под-панели. Когда
+// active — следующий клик по карте ставит выбранный юнит/дрон, потом режим
+// установки автоматически выключается (или остаётся если зажат shift).
+let placeMode = false;
+const btnPlace = document.getElementById('btn-place');
+const btnPlaceDrone = document.getElementById('btn-place-drone');
+
+function togglePlaceMode() {
+    placeMode = !placeMode;
+    if (btnPlace) btnPlace.classList.toggle('active', placeMode && currentMode === 'units');
+    if (btnPlaceDrone) btnPlaceDrone.classList.toggle('active', placeMode && currentMode === 'drones');
+    if (placeMode) {
+        if (currentMode === 'units' && !selUnit[unitSide]) { showToast('Сначала выбери юнит'); placeMode = false; btnPlace.classList.remove('active'); return; }
+        if (currentMode === 'drones' && !selDrone[droneSide]) { showToast('Сначала выбери БПЛА'); placeMode = false; btnPlaceDrone.classList.remove('active'); return; }
+        showToast('Кликни на карту, чтобы поставить');
+    }
+}
+
+// ================= REPLAY SPEED =================
+let replayFrameMs = REPLAY_FRAME_MS_DEFAULT;
+function updateReplaySpeed(v) {
+    replayFrameMs = +v;
+    document.getElementById('replay-speed-val').textContent = v + ' мс';
+}
+
+// ================= БПЛА / ДРОНЫ =================
+// SVG-силуэты сверху-вниз. Без картинок — только контур.
+// 8 типов: FP-1, Герань-2, Shahed-136, Shahed-236 (jet), МиГ-29, Су-35, F-35, F-16.
+const DRONE_SVG = {
+    // FP-1 — квадрокоптер FPV: 4 луча с кругами-роторами + центральное тело
+    'FP-1': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <line x1="12" y1="12" x2="4" y2="4" stroke="#fff" stroke-width="1.2"/>
+        <line x1="12" y1="12" x2="20" y2="4" stroke="#fff" stroke-width="1.2"/>
+        <line x1="12" y1="12" x2="4" y2="20" stroke="#fff" stroke-width="1.2"/>
+        <line x1="12" y1="12" x2="20" y2="20" stroke="#fff" stroke-width="1.2"/>
+        <circle cx="4" cy="4" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>
+        <circle cx="20" cy="4" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>
+        <circle cx="4" cy="20" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>
+        <circle cx="20" cy="20" r="2.5" fill="none" stroke="#fff" stroke-width="1"/>
+        <rect x="10" y="10" width="4" height="4" fill="#fff"/>
+    </svg>`,
+    // Герань-2 / Shahed-136 — дельта-крыло с толкающим винтом
+    'Герань-2': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L22 20 L12 17 L2 20 Z" fill="#fff" stroke="#fff" stroke-width="0.5"/>
+        <line x1="12" y1="17" x2="12" y2="22" stroke="#fff" stroke-width="1"/>
+        <circle cx="12" cy="22" r="1.2" fill="#fff"/>
+    </svg>`,
+    // Shahed-136 — дельта-крыло с винтом с лопастями
+    'Shahed-136': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L22 20 L12 17 L2 20 Z" fill="#fff" stroke="#fff" stroke-width="0.5"/>
+        <line x1="12" y1="17" x2="12" y2="21" stroke="#fff" stroke-width="1"/>
+        <line x1="8" y1="22" x2="16" y2="22" stroke="#fff" stroke-width="1.5"/>
+    </svg>`,
+    // Shahed-236 (реактивный) — дельта-крыло с соплом
+    'Shahed-236': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L22 20 L12 17 L2 20 Z" fill="#fff" stroke="#fff" stroke-width="0.5"/>
+        <line x1="12" y1="17" x2="12" y2="22" stroke="#fff" stroke-width="1.5"/>
+        <path d="M11 22 L12 24 L13 22 Z" fill="#fff"/>
+    </svg>`,
+    // МиГ-29 — истребитель со стреловидными крыльями и двойным хвостом
+    'МиГ-29': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 1L13 9L22 14L22 16L13 12L13 18L17 22L15 22L12 19L9 22L7 22L11 18L11 12L2 16L2 14L11 9Z" fill="#fff" stroke="#fff" stroke-width="0.3"/>
+    </svg>`,
+    // Су-35 — крупнее, стреловидные крылья, одиночный стабилизатор
+    'Су-35': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 1L13.5 8L23 13L23 15L13.5 11L13.5 18L18 22L15.5 22L12 19L8.5 22L6 22L10.5 18L10.5 11L1 15L1 13L10.5 8Z" fill="#fff" stroke="#fff" stroke-width="0.3"/>
+    </svg>`,
+    // F-35 — стелс, угловатые линии, одиночный хвост
+    'F-35': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L13 8L20 12L18 13L13 11L13 17L16 21L14 21L12 18L10 21L8 21L11 17L11 11L6 13L4 12L11 8Z" fill="#fff" stroke="#fff" stroke-width="0.3"/>
+    </svg>`,
+    // F-16 — истребитель со стреловидным крылом, одиночный хвост
+    'F-16': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L13 8L21 14L19 15L13 11L13 18L16 22L13 22L12 19L11 22L8 22L11 18L11 11L5 15L3 14L11 8Z" fill="#fff" stroke="#fff" stroke-width="0.3"/>
+    </svg>`,
+    // === Дополнительные дроны — UA ===
+    // Bayraktar TB2 — турецкий MALE: длинные крылья, центральный фюзеляж с V-хвостом
+    'Bayraktar TB2': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="15" fill="#fff"/>
+        <path d="M3 12L21 12L21 13L3 13Z" fill="#fff"/>
+        <path d="M10 18L9 22L11 21Z" fill="#fff"/>
+        <path d="M14 18L15 22L13 21Z" fill="#fff"/>
+    </svg>`,
+    // Switchblade 300 — компактный камикадзе с X-крыльями
+    'Switchblade-300': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="18" fill="#fff"/>
+        <line x1="6" y1="11" x2="18" y2="11" stroke="#fff" stroke-width="2"/>
+        <line x1="6" y1="13" x2="18" y2="13" stroke="#fff" stroke-width="2"/>
+    </svg>`,
+    // Switchblade 600 — крупнее, анти-танковый камикадзе
+    'Switchblade-600': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="2" width="2" height="20" fill="#fff"/>
+        <path d="M3 11L21 11L21 13L3 13Z" fill="#fff"/>
+        <line x1="8" y1="6" x2="16" y2="6" stroke="#fff" stroke-width="1.5"/>
+    </svg>`,
+    // Phoenix Ghost — камикадзе, развёрнутые X-крылья
+    'Phoenix Ghost': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="18" fill="#fff"/>
+        <line x1="4" y1="9" x2="20" y2="9" stroke="#fff" stroke-width="2.5"/>
+        <line x1="4" y1="15" x2="20" y2="15" stroke="#fff" stroke-width="2.5"/>
+    </svg>`,
+    // Leleka-100 (Лелека-100) — разведывательный, длинные крылья
+    'Лелека-100': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="5" width="2" height="14" fill="#fff"/>
+        <path d="M2 11L22 11L22 13L2 13Z" fill="#fff"/>
+        <path d="M11 19L13 19L13 22L11 22Z" fill="#fff"/>
+    </svg>`,
+    // Shark (Шарк) — разведывательный, длинные прямые крылья
+    'Shark': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="4" width="2" height="16" fill="#fff"/>
+        <path d="M2 11L22 11L22 13L2 13Z" fill="#fff"/>
+        <path d="M10 18L14 18L13 22L11 22Z" fill="#fff"/>
+    </svg>`,
+    // Бобер — украинский дрон-камикадзе, дельта-крыло
+    'Бобер': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L20 18 L12 16 L4 18 Z" fill="#fff" stroke="#fff" stroke-width="0.4"/>
+        <line x1="12" y1="16" x2="12" y2="22" stroke="#fff" stroke-width="1"/>
+    </svg>`,
+    // Рей — украинский камикадзе с двумя крыльями
+    'Рей': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="17" fill="#fff"/>
+        <path d="M3 8L21 8L21 10L3 10Z" fill="#fff"/>
+        <path d="M3 14L21 14L21 16L3 16Z" fill="#fff"/>
+    </svg>`,
+    // Mugin-5 Pro — украинский ударный БПЛА
+    'Mugin-5': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="16" fill="#fff"/>
+        <path d="M2 11L22 11L22 13L2 13Z" fill="#fff"/>
+        <path d="M11 19L13 19L13 22L11 22Z" fill="#fff"/>
+    </svg>`,
+    // PD-1 — украинский разведывательный
+    'PD-1': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="4" width="2" height="14" fill="#fff"/>
+        <path d="M2 10L22 10L22 12L2 12Z" fill="#fff"/>
+        <path d="M2 14L22 14L22 16L2 16Z" fill="#fff"/>
+    </svg>`,
+    // === Дополнительные дроны — RU ===
+    // Оrlan-10 (Орлан-10) — разведывательный, длинное крыло с V-хвостом
+    'Орлан-10': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="4" width="2" height="14" fill="#fff"/>
+        <path d="M2 10L22 10L22 12L2 12Z" fill="#fff"/>
+        <path d="M11 18L10 22L13 21Z" fill="#fff"/>
+        <path d="M13 18L14 22L11 21Z" fill="#fff"/>
+    </svg>`,
+    // Forpost (Форпост) — разведывательный среднего радиуса
+    'Форпост': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="15" fill="#fff"/>
+        <path d="M2 11L22 11L22 13L2 13Z" fill="#fff"/>
+        <path d="M10 18L8 22L11 21Z" fill="#fff"/>
+        <path d="M14 18L16 22L13 21Z" fill="#fff"/>
+    </svg>`,
+    // Inokhodets/Иноходец — ударный БПЛА, сигарообразный фюзеляж
+    'Иноходец': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="15" fill="#fff"/>
+        <path d="M3 12L21 12L21 14L3 14Z" fill="#fff"/>
+        <path d="M11 18L9 22L13 22Z" fill="#fff"/>
+    </svg>`,
+    // Lancet-3 (Ланцет-3) — камикадзе с X-крыльями и двойной парой
+    'Ланцет-3': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L13 8L18 13L13 12L13 18L16 22L13 22L12 19L11 22L8 22L11 18L11 12L6 13L11 8Z" fill="#fff" stroke="#fff" stroke-width="0.3"/>
+    </svg>`,
+    // ZALA 421 — компактный разведывательный
+    'ZALA-421': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="9" y="5" width="6" height="13" fill="#fff" rx="2"/>
+        <path d="M3 9L21 9L21 11L3 11Z" fill="#fff"/>
+    </svg>`,
+    // KUB-BLA (Кубь-БЛА) — камикадзе с треугольным крылом
+    'KUB-BLA': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L22 18 L12 16 L2 18 Z" fill="#fff" stroke="#fff" stroke-width="0.4"/>
+        <line x1="12" y1="16" x2="12" y2="21" stroke="#fff" stroke-width="1"/>
+    </svg>`,
+    // Гарпия — камикадзе с дельта-крылом
+    'Гарпия': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L20 16 L12 14 L4 16 Z" fill="#fff" stroke="#fff" stroke-width="0.4"/>
+        <line x1="12" y1="14" x2="12" y2="22" stroke="#fff" stroke-width="1"/>
+    </svg>`,
+    // Mohajer-6 (Мохаджер-6) — иранский разведывательно-ударный, вытянутые крылья
+    'Mohajer-6': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <rect x="11" y="3" width="2" height="14" fill="#fff"/>
+        <path d="M2 10L22 10L22 12L2 12Z" fill="#fff"/>
+        <path d="M11 17L9 22L13 22Z" fill="#fff"/>
+    </svg>`,
+    // Arash-2 — иранский дальний камикадзе
+    'Arash-2': `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L20 18 L12 16 L4 18 Z" fill="#fff" stroke="#fff" stroke-width="0.4"/>
+        <line x1="12" y1="16" x2="12" y2="22" stroke="#fff" stroke-width="1.5"/>
+    </svg>`
+};
+// Список дронов: [label, fullName, side] — side значит чья это модель.
+// FPV и Герань/Shahed — могут быть у обеих сторон (трофейные), но в игре
+// привяжем к типичной стороне применения.
+const DRONES = [
+    // === Базовый набор ===
+    { label: 'FP-1',       name: 'FPV-дрон FP-1',                 side: 'ua' },
+    { label: 'Shahed-136', name: 'БПЛА Shahed-136 (копланер)',    side: 'ru' },
+    { label: 'Герань-2',   name: 'Герань-2 (Shahed-136 RU)',      side: 'ru' },
+    { label: 'Shahed-236', name: 'Shahed-236 (реактивный)',       side: 'ru' },
+    { label: 'МиГ-29',     name: 'МиГ-29 (истребитель)',           side: 'ru' },
+    { label: 'Су-35',     name: 'Су-35 (многоцелевой истребитель)', side: 'ru' },
+    { label: 'F-35',       name: 'F-35 (стелс-истребитель)',       side: 'ua' },
+    { label: 'F-16',       name: 'F-16 (многоцелевой истребитель)', side: 'ua' },
+    // === Дополнительные — UA ===
+    { label: 'Bayraktar TB2', name: 'Bayraktar TB2 (турецкий MALE)', side: 'ua' },
+    { label: 'Switchblade-300', name: 'Switchblade 300 (камикадзе)', side: 'ua' },
+    { label: 'Switchblade-600', name: 'Switchblade 600 (анти-танк)', side: 'ua' },
+    { label: 'Phoenix Ghost', name: 'Phoenix Ghost (камикадзе)',    side: 'ua' },
+    { label: 'Лелека-100', name: 'Leleka-100 (разведка)',           side: 'ua' },
+    { label: 'Shark',      name: 'Shark (разведка)',                 side: 'ua' },
+    { label: 'Бобер',      name: 'Бобер (камикадзе-дальнобойный)',   side: 'ua' },
+    { label: 'Рей',       name: 'Рей (камикадзе)',                  side: 'ua' },
+    { label: 'Mugin-5',    name: 'Mugin-5 Pro (ударный)',            side: 'ua' },
+    { label: 'PD-1',       name: 'PD-1 (разведка)',                 side: 'ua' },
+    // === Дополнительные — RU ===
+    { label: 'Орлан-10',  name: 'Орлан-10 (разведка)',              side: 'ru' },
+    { label: 'Форпост',   name: 'Форпост (разведка средняя)',      side: 'ru' },
+    { label: 'Иноходец',  name: 'Иноходец (ударный БПЛА)',         side: 'ru' },
+    { label: 'Ланцет-3',  name: 'Ланцет-3 (камикадзе)',            side: 'ru' },
+    { label: 'ZALA-421',  name: 'ZALA 421 (компактная разведка)',  side: 'ru' },
+    { label: 'KUB-BLA',   name: 'KUB-BLA (камикадзе)',             side: 'ru' },
+    { label: 'Гарпия',    name: 'Гарпия (камикадзе)',              side: 'ru' },
+    { label: 'Mohajer-6', name: 'Mohajer-6 (иранский развед/ударный)', side: 'ru' },
+    { label: 'Arash-2',    name: 'Arash-2 (иранский дальний камикадзе)', side: 'ru' }
+];
+const droneLayer = L.layerGroup().addTo(map);
+const dronesPanelEl = document.getElementById('drones-panel');
+const droneListEl = document.getElementById('drone-list');
+const droneSearchEl = document.getElementById('drone-search');
+// btnDrones уже объявлен выше (с остальными кнопками в state-блоке)
+let drones = []; // each: { side, label, name, lat, lng, m }
+let droneSide = 'ua';
+let selDrone = { ua: null, ru: null };
+
+function switchDroneSide(side) {
+    droneSide = side;
+    document.querySelectorAll('#drones-panel .unit-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.side === side);
+    });
+    renderDroneList();
+}
+function renderDroneList() {
+    const q = (droneSearchEl.value || '').trim().toLowerCase();
+    const list = DRONES.filter(d => d.side === droneSide);
+    const filtered = q ? list.filter(d => (d.label + ' ' + d.name).toLowerCase().includes(q)) : list;
+    droneListEl.innerHTML = '';
+    const sel = selDrone[droneSide];
+    for (const d of filtered) {
+        const item = document.createElement('div');
+        item.className = 'unit-item ' + droneSide + (sel && sel.label === d.label ? ' active' : '');
+        const thumb = document.createElement('span');
+        thumb.className = 'usym';
+        thumb.innerHTML = DRONE_SVG[d.label] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="#fff"/></svg>';
+        const lab = document.createElement('span');
+        lab.className = 'ulab';
+        lab.textContent = d.label;
+        const tipWrap = document.createElement('span');
+        tipWrap.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        tipWrap.textContent = d.name;
+        item.append(thumb, lab, tipWrap);
+        item.onclick = () => {
+            selDrone[droneSide] = { label: d.label, name: d.name };
+            renderDroneList();
+            if (currentMode !== 'drones') setMode('drones');
+            if (currentMode === 'drones' && !placeMode) togglePlaceMode();
+        };
+        droneListEl.appendChild(item);
+    }
+}
+function buildDroneMarkerIcon(side, label, name) {
+    const el = document.createElement('div');
+    el.className = 'drone-marker ' + side;
+    const sym = document.createElement('span');
+    sym.className = 'usym';
+    sym.innerHTML = DRONE_SVG[label] || '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="#fff"/></svg>';
+    el.appendChild(sym);
+    const lab = document.createElement('span');
+    lab.className = 'ulab';
+    lab.textContent = label;
+    el.appendChild(lab);
+    return L.divIcon({ className: '', html: el, iconSize: [42, 42], iconAnchor: [21, 21] });
+}
+function addDrone(side, label, name, lat, lng) {
+    const m = L.marker([lat, lng], {
+        draggable: true, keyboard: false, zIndexOffset: 700,
+        icon: buildDroneMarkerIcon(side, label, name)
+    }).addTo(droneLayer);
+    m.bindTooltip(name + ' — ЛКМ: лететь к цели · ПКМ: удалить', { direction: 'top', offset: [0, -20] });
+    const rec = { side, label, name, lat, lng, m, flying: false, target: null };
+    m.on('dragend', () => { if (!rec.flying) { const q = m.getLatLng(); rec.lat = q.lat; rec.lng = q.lng; saveDrones(); } });
+    m.on('contextmenu', e => { e.originalEvent.preventDefault(); droneLayer.removeLayer(m); drones = drones.filter(x => x !== rec); saveDrones(); if (missionDrone === rec) cancelMission(); });
+    // ЛКМ по дрону → enter mission mode (выбрать дрон, ждать клика-цели).
+    // Раньше клик удалял дрон — неудобно. Теперь: ПКМ для удаления, ЛКМ для миссии.
+    m.on('click', e => {
+        e.originalEvent.preventDefault();
+        if (rec.flying) { showToast('Дрон уже в полёте'); return; }
+        enterMissionMode(rec);
+    });
+    drones.push(rec);
+    return rec;
+}
+function placeDrone(ll) {
+    const d = selDrone[droneSide];
+    if (!d) { showToast('Сначала выбери БПЛА'); return; }
+    addDrone(droneSide, d.label, d.name, ll.lat, ll.lng);
+    saveDrones();
+}
+
+// ================= MISSION MODE: дрон ждёт назначения цели =================
+let missionDrone = null;
+const missionBanner = document.getElementById('mission-banner');
+const missionText = document.getElementById('mission-text');
+
+function enterMissionMode(droneRec) {
+    missionDrone = droneRec;
+    // Снимаем .selected с других дронов
+    drones.forEach(d => { if (d.m?._icon) d.m._icon.querySelector('.drone-marker')?.classList.remove('selected'); });
+    // Помечаем выбранный
+    const el = droneRec.m.getElement?.();
+    if (el) el.querySelector('.drone-marker')?.classList.add('selected');
+    // Показываем баннер
+    missionText.textContent = `Дрон «${droneRec.label}» выбран — кликни на карту или цель`;
+    missionBanner.classList.remove('hidden');
+    // Меняем курсор
+    mapContainer.style.cursor = 'crosshair';
+}
+
+function cancelMission() {
+    if (missionDrone?.m?.getElement) {
+        const el = missionDrone.m.getElement();
+        el?.querySelector('.drone-marker')?.classList.remove('selected');
+    }
+    missionDrone = null;
+    missionBanner.classList.add('hidden');
+    mapContainer.style.cursor = currentMode === 'drones' ? 'pointer' : '';
+}
+
+/**
+ * Запускает дрон к точке назначения. Анимация — rAF, плавно интерполирует
+ * lat/lng от старта к финишу. Длительность ~3-6 сек, зависит от дистанции
+ * (но не меньше 2 сек, чтобы было видно даже короткие полёты).
+ * По прибытии: если рядом есть strategic target — запускает strikeTarget.
+ */
+function flyDroneTo(droneRec, destLat, destLng) {
+    if (droneRec.flying) { showToast('Дрон уже в полёте'); return; }
+    const startLat = droneRec.lat;
+    const startLng = droneRec.lng;
+    // Простая евклидова интерполяция lat/lng. turf.distance не нужен —
+    // для анимации достаточно, чтобы скорость была «приемлемой для глаза».
+    // Скорость: ~3 сек на 1 градус lat (~111 км) = ~37 км/с = очень быстро,
+    // но визуально — плавно.
+    const dLat = destLat - startLat;
+    const dLng = destLng - startLng;
+    const distDeg = Math.sqrt(dLat * dLat + dLng * dLng);
+    // 2-6 секунд в зависимости от дистанции
+    const durationMs = Math.min(6000, Math.max(2000, distDeg * 3000));
+    const start = performance.now();
+
+    droneRec.flying = true;
+    droneRec.target = { lat: destLat, lng: destLng };
+    // Помечаем .flying для CSS-анимации (пульс масштаб)
+    const setFlyingClass = (on) => {
+        const el = droneRec.m.getElement?.();
+        el?.querySelector('.drone-marker')?.classList.toggle('flying', on);
+    };
+    setFlyingClass(true);
+
+    // Рисуем линию маршрута
+    const routeLine = L.polyline(
+        [[startLat, startLng], [destLat, destLng === destLng ? destLng : startLng]],
+        { color: '#fb923c', weight: 1.5, opacity: 0.6, dashArray: '4,4', interactive: false }
+    ).addTo(map);
+    routeLine.setLatLngs([[startLat, startLng], [destLat, destLng]]);
+
+    const step = (now) => {
+        const t = Math.min(1, (now - start) / durationMs);
+        // easeInOutQuad для плавности на старте/финише
+        const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        const curLat = startLat + dLat * eased;
+        const curLng = startLng + dLng * eased;
+        droneRec.m.setLatLng([curLat, curLng]);
+        // Обновляем линию: текущая позиция → цель
+        routeLine.setLatLngs([[curLat, curLng], [destLat, destLng]]);
+
+        if (t < 1) {
+            requestAnimationFrame(step);
+        } else {
+            // Финал: дрон на точке
+            droneRec.flying = false;
+            droneRec.lat = destLat;
+            droneRec.lng = destLng;
+            setFlyingClass(false);
+            // Дрон ИСЧЕЗАЕТ — fade out opacity маркера за ~400мс
+            const droneIconEl = droneRec.m.getElement?.();
+            if (droneIconEl) {
+                droneIconEl.style.transition = 'opacity .4s ease-out, transform .4s ease-out';
+                droneIconEl.style.opacity = '0';
+                droneIconEl.style.transform = 'scale(0.3)';
+                // Через 400мс убираем маркер с карты совсем (и линию маршрута)
+                setTimeout(() => {
+                    try { droneLayer.removeLayer(droneRec.m); } catch(e){}
+                    try { map.removeLayer(routeLine); } catch(e){}
+                    drones = drones.filter(x => x !== droneRec);
+                    saveDrones();
+                }, 450);
+            } else {
+                // fallback — если не нашли DOM-элемент
+                setTimeout(() => { try { droneLayer.removeLayer(droneRec.m); } catch(e){} try { map.removeLayer(routeLine); } catch(e){} drones = drones.filter(x => x !== droneRec); saveDrones(); }, 600);
+            }
+            // Если рядом есть strategic target — наносим удар (с задержкой
+            // чтобы было видно, как дрон пропал → произошёл взрыв)
+            const nearbyTarget = findTargetAt(destLat, destLng, 0.2);
+            if (nearbyTarget) {
+                setTimeout(() => strikeTarget(nearbyTarget.t, nearbyTarget.m), 200);
+                showToast(`«${droneRec.label}» поразил цель: ${nearbyTarget.t.name}`);
+            } else {
+                showToast(`«${droneRec.label}» уничтожен в точке назначения`);
+            }
+        }
+    };
+    requestAnimationFrame(step);
+}
+
+/** Ищет strategic target в радиусе ~R градусов от точки. */
+function findTargetAt(lat, lng, R) {
+    for (const tm of targetMarkers) {
+        const dLat = tm.t.lat - lat;
+        const dLng = tm.t.lng - lng;
+        if (Math.sqrt(dLat * dLat + dLng * dLng) <= R) return tm;
+    }
+    return null;
+}
+function saveDrones() {
+    try {
+        const clean = drones.map(d => ({ side: d.side, label: d.label, name: d.name, lat: d.lat, lng: d.lng }));
+        localStorage.setItem('territory-drones', JSON.stringify(clean));
+    } catch (e) {}
+}
+function loadDrones() {
+    try {
+        const saved = localStorage.getItem('territory-drones');
+        if (!saved) { renderDroneList(); return; }
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) {
+            drones = [];
+            for (const d of arr) {
+                if (d && d.side && d.label && d.name && isFinite(d.lat) && isFinite(d.lng)) {
+                    addDrone(d.side, d.label, d.name, d.lat, d.lng);
+                }
+            }
+        }
+        renderDroneList();
+    } catch (e) { renderDroneList(); }
+}
+renderDroneList();
+
+// ================= СТРАТЕГИЧЕСКИЕ ЦЕЛИ =================
+// Кураторский список стратегических целей: мосты, НПЗ, АЗС, заводы, ТЭЦ/ГЭС,
+// подстанции, аэродромы, ВМБ, порты, АЭС. Реальные координаты (公开известные объекты).
+const TARGETS = [
+    // Мосты
+    { name: 'Крымский мост', lat: 45.290, lng: 36.526, kind: 'bridge', icon: '🌉' },
+    // НПЗ
+    { name: 'НПЗ «Рязанский», Рязань', lat: 54.612, lng: 39.691, kind: 'refinery', icon: '🛢' },
+    { name: 'НПЗ «Киришинефтеоргсинтез»', lat: 59.456, lng: 32.020, kind: 'refinery', icon: '🛢' },
+    { name: 'НПЗ «Славянск-на-Кубани»', lat: 45.214, lng: 38.097, kind: 'refinery', icon: '🛗' },
+    { name: 'НПЗ «Ильский»', lat: 44.854, lng: 38.364, kind: 'refinery', icon: '🛗' },
+    { name: 'Лукойл-Пермнефтеоргсинтез', lat: 57.987, lng: 55.968, kind: 'refinery', icon: '🛗' },
+    // ТЭЦ/ТЭС/ГЭС — Украина
+    { name: 'ТЭС «Змиёвская», Харьковская обл.', lat: 49.728, lng: 36.361, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Углегорская», Донецкая обл.', lat: 48.108, lng: 38.271, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Криворожская», Днипро', lat: 47.957, lng: 33.350, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Славянская», Донецкая обл.', lat: 48.847, lng: 37.597, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Запорожская»', lat: 47.870, lng: 35.140, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Бурштынская»', lat: 49.255, lng: 24.620, kind: 'tep', icon: '🏭' },
+    { name: 'ТЭС «Ладыжинская», Винницкая обл.', lat: 48.168, lng: 29.251, kind: 'tep', icon: '🏭' },
+    { name: 'Киевская ТЭЦ-5', lat: 50.402, lng: 30.642, kind: 'tep', icon: '🏭' },
+    { name: 'Киевская ТЭЦ-6', lat: 50.402, lng: 30.654, kind: 'tep', icon: '🏭' },
+    { name: 'Харьковская ТЭЦ-5', lat: 49.980, lng: 36.328, kind: 'tep', icon: '🏭' },
+    { name: 'Днепровская ГЭС', lat: 47.869, lng: 35.146, kind: 'ges', icon: '💧' },
+    { name: 'Каховская ГЭС', lat: 46.789, lng: 33.476, kind: 'ges', icon: '💧' },
+    { name: 'Днестровская ГАЭС', lat: 48.510, lng: 27.928, kind: 'ges', icon: '💧' },
+    { name: 'Киевская ГЭС', lat: 50.514, lng: 30.553, kind: 'ges', icon: '💧' },
+    { name: 'Каневская ГЭС', lat: 49.735, lng: 32.057, kind: 'ges', icon: '💧' },
+    { name: 'Новокаховская ГЭС', lat: 46.795, lng: 33.651, kind: 'ges', icon: '💧' },
+    // Подстанции (750 кВ и 330 кВ)
+    { name: 'ПС «Запорожская» 750кВ', lat: 47.838, lng: 35.090, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Днепровская» 750кВ', lat: 48.466, lng: 35.064, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Новониколаевская» 750кВ', lat: 49.012, lng: 36.478, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Пятихатская» 750кВ', lat: 48.347, lng: 33.621, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Киевская» 750кВ', lat: 50.476, lng: 30.722, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Харьковская» 750кВ', lat: 49.890, lng: 36.401, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Ладыжинская» 750кВ', lat: 48.158, lng: 29.263, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Узловая» 330кВ, Запорожье', lat: 47.842, lng: 35.150, kind: 'substation', icon: '🔌' },
+    { name: 'ПС «Кременчугская» 330кВ', lat: 49.075, lng: 33.420, kind: 'substation', icon: '🔌' },
+    // АЭС
+    { name: 'ЗАЭС (Запорожская АЭС)', lat: 47.514, lng: 34.590, kind: 'npp', icon: '☢' },
+    { name: 'ЮУАЭС (Южно-Украинская АЭС)', lat: 47.832, lng: 31.220, kind: 'npp', icon: '☢' },
+    { name: 'ХАЭС (Хмельницкая АЭС)', lat: 50.297, lng: 26.627, kind: 'npp', icon: '☢' },
+    { name: 'РАЭС (Ровенская АЭС)', lat: 51.334, lng: 25.842, kind: 'npp', icon: '☢' },
+    // Заводы
+    { name: 'Азовсталь (металлургический комбинат)', lat: 47.098, lng: 37.546, kind: 'plant', icon: '🏭' },
+    { name: 'Завод «Красный Октябрь» Волгоград', lat: 48.748, lng: 44.547, kind: 'plant', icon: '🏭' },
+    { name: 'Завод им. Малышева, Харьков', lat: 49.998, lng: 36.244, kind: 'plant', icon: '🏭' },
+    { name: 'Антонов (Гостомель)', lat: 50.602, lng: 30.268, kind: 'plant', icon: '🏭' },
+    { name: 'Мотор Сич, Запорожье', lat: 47.852, lng: 35.143, kind: 'plant', icon: '🏭' },
+    { name: 'Криворожсталь', lat: 47.908, lng: 33.375, kind: 'plant', icon: '🏭' },
+    // Аэродромы
+    { name: 'Аэродром Энгельс', lat: 51.476, lng: 46.073, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Дягилево', lat: 54.628, lng: 39.675, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Оленья', lat: 69.186, lng: 33.082, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Бельбек', lat: 44.714, lng: 33.879, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Саки', lat: 45.094, lng: 33.587, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Чкаловск', lat: 54.628, lng: 39.675, kind: 'airbase', icon: '✈' },
+    { name: 'Аэродром Хадыженск', lat: 44.735, lng: 39.557, kind: 'airbase', icon: '✈' },
+    // ВМБ и порты
+    { name: 'Черноморский флот (Севастополь)', lat: 44.616, lng: 33.528, kind: 'navalbase', icon: '⚓' },
+    { name: 'Порт Новороссийск', lat: 44.723, lng: 37.768, kind: 'port', icon: '🚢' },
+    { name: 'Порт Одессы', lat: 46.498, lng: 30.732, kind: 'port', icon: '🚢' },
+    { name: 'Порт Черноморск', lat: 46.184, lng: 30.658, kind: 'port', icon: '🚢' },
+    { name: 'Порт Южный', lat: 46.638, lng: 31.042, kind: 'port', icon: '🚢' },
+    // АЗС
+    { name: 'АЗС Лукойл, Брянск', lat: 53.243, lng: 34.420, kind: 'station', icon: '⛽' }
+];
+const targetLayer = L.layerGroup().addTo(map);
+let targetMarkers = [];
+let targetsVisible = false;
+
+function buildTargetIcon(t, destroyed) {
+    const el = document.createElement('div');
+    el.className = 'target-marker' + (destroyed ? ' destroyed' : '');
+    el.textContent = t.icon || '◉';
+    return L.divIcon({ className: '', html: el, iconSize: [22, 22], iconAnchor: [11, 11] });
+}
+function renderTargets() {
+    targetLayer.clearLayers();
+    targetMarkers = [];
+    if (!targetsVisible) return;
+    for (const t of TARGETS) {
+        const m = L.marker([t.lat, t.lng], {
+            keyboard: false, zIndexOffset: 400, icon: buildTargetIcon(t, false)
+        }).addTo(targetLayer);
+        m.bindTooltip(`${t.icon} ${t.name} (${kindLabel(t.kind)})`, { direction: 'top', offset: [0, -10] });
+        m.on('click', () => strikeTarget(t, m));
+        targetMarkers.push({ t, m, destroyed: false });
+    }
+}
+function kindLabel(k) {
+    return ({ bridge: 'мост', refinery: 'НПЗ', plant: 'завод', station: 'АЗС', airbase: 'аэродром', navalbase: 'ВМБ', port: 'порт', datacenter: 'дата-центр', tep: 'ТЭС/ТЭЦ', ges: 'ГЭС', substation: 'подстанция', npp: 'АЭС' })[k] || k;
+}
+function toggleTargets() {
+    targetsVisible = !targetsVisible;
+    btnTargets.classList.toggle('active', targetsVisible);
+    renderTargets();
+    showToast(targetsVisible ? `Показано целей: ${TARGETS.length}` : 'Цели скрыты');
+}
+function strikeTarget(t, m) {
+    // Анимация удара: 3 последовательных flash-кольца (взрывная волна)
+    // разного цвета и размера + дым (затухающее тёмное облако) + в конце
+    // цель становится серой «уничтоженной».
+    const rec = targetMarkers.find(x => x.t === t);
+    if (!rec || rec.destroyed) return;
+    rec.destroyed = true;
+
+    // Кольцо 1 — яркая жёлто-оранжевая вспышка (быстро, 0.5с)
+    const flash1 = L.circleMarker([t.lat, t.lng], {
+        radius: 4, color: '#fff', fillColor: '#fbbf24', fillOpacity: 1, weight: 3, interactive: false
+    }).addTo(map);
+    // Кольцо 2 — оранжево-красная волна (чуть медленнее, 0.7с)
+    const flash2 = L.circleMarker([t.lat, t.lng], {
+        radius: 6, color: '#f97316', fillColor: '#ef4444', fillOpacity: 0.8, weight: 2, interactive: false
+    }).addTo(map);
+    // Кольцо 3 — тёмный дым (затухает медленно, 1.2с)
+    const smoke = L.circleMarker([t.lat, t.lng], {
+        radius: 8, color: '#1f2937', fillColor: '#374151', fillOpacity: 0.6, weight: 1, interactive: false
+    }).addTo(map);
+
+    const start = performance.now();
+    const totalMs = 1200;
+    const animExplosion = () => {
+        const dt = (performance.now() - start) / totalMs;
+        if (dt >= 1) {
+            // Финал
+            try { map.removeLayer(flash1); } catch(e){}
+            try { map.removeLayer(flash2); } catch(e){}
+            try { map.removeLayer(smoke); } catch(e){}
+            m.setIcon(buildTargetIcon(t, true));
+            showToast(`${t.icon} ${t.name} — поражён`);
+            return;
+        }
+        // flash1: быстро растёт и исчезает за первые 0.4 (0..0.33)
+        const dt1 = Math.min(1, dt / 0.33);
+        flash1.setRadius(4 + 18 * dt1);
+        flash1.setStyle({ opacity: 1 - dt1, fillOpacity: (1 - dt1) * 0.9 });
+        // flash2: растёт с задержкой, исчезает за 0.66
+        const dt2 = Math.max(0, Math.min(1, (dt - 0.1) / 0.55));
+        flash2.setRadius(6 + 24 * dt2);
+        flash2.setStyle({ opacity: 1 - dt2, fillOpacity: (1 - dt2) * 0.7 });
+        // smoke: появляется позже, растёт, медленно рассеивается
+        const dt3 = Math.max(0, Math.min(1, (dt - 0.2) / 0.8));
+        smoke.setRadius(8 + 32 * dt3);
+        smoke.setStyle({ opacity: Math.max(0, 0.7 - dt3 * 0.7), fillOpacity: Math.max(0, 0.6 - dt3 * 0.6) });
+        requestAnimationFrame(animExplosion);
+    };
+    requestAnimationFrame(animExplosion);
+
+    // Доп. «встряска» — короткое увеличение маркера цели через CSS transform
+    const targetEl = m.getElement?.();
+    if (targetEl) {
+        targetEl.style.transition = 'transform .15s ease-out';
+        targetEl.style.transform = 'scale(1.6)';
+        setTimeout(() => { targetEl.style.transform = 'scale(1)'; }, 200);
+    }
+}
+
+// ================= СТАРТ APP =================
+// Вызывается в самом конце — когда все const-ы (unitsPanel, unitSearchEl и
+// т.д.) уже определены. initApp может выполниться синхронно (если в
+// localStorage есть сохранение), не дойдя до await — и тогда loadUnits
+// должен быть готов к работе.
+initApp();
+</script>
+</body>
+</html>
